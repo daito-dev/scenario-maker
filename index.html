@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Driving Scenario Design Tool</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  </head>
+
+  <body>
+    <div id="layout">
+      <!-- ===== Left Panel ===== -->
+      <div id="leftPanel">
+        <h2>Scenario Settings</h2>
+
+        <label>
+          Number of Lanes (1–6):
+          <input id="lanesInput" type="number" min="1" max="6" value="2" />
+        </label>
+
+        <label>
+          Total Distance (m):
+          <input
+            id="distanceInput"
+            type="number"
+            min="100"
+            max="5000"
+            step="50"
+            value="500"
+          />
+        </label>
+
+        <button id="resetButton">Reset</button>
+        <button id="openCameraDialog">Advanced Settings</button>
+        <button id="exportPdfButton">Export PDF</button>
+
+        <hr />
+
+        <!-- ===== Vehicle Panels ===== -->
+        <div class="vehicle-panel" data-vehicle-id="ego">
+          <div class="vehicle-header">
+            <span class="vehicle-label">Ego Vehicle</span>
+            <label><input type="checkbox" class="vehicle-enabled" checked /> Show</label>
+          </div>
+
+          <div class="vehicle-body">
+            <label>Initial Lane:
+              <input type="number" class="vehicle-lane" min="1" max="6" value="1" />
+            </label>
+
+            <label>
+              Color:
+              <input type="color" class="vehicle-color" value="#ff4444" />
+              Speed (km/h):
+              <input type="number" class="vehicle-speed" step="1" value="72" />
+            </label>
+
+            <label>Curve Smoothness:
+              <input type="range" class="vehicle-smooth" min="0" max="1" step="0.1" value="0.7" />
+              <span class="vehicle-smooth-value">0.7</span>
+            </label>
+
+            <label>Waypoints:</label>
+            <textarea class="vehicle-waypoints"></textarea>
+            <button class="vehicle-add-wp">Add Waypoint</button>
+
+            <label>Brake Points (x, decel [m/s²]):</label>
+            <textarea class="vehicle-brakepoints"></textarea>
+            <button class="vehicle-add-bp">Add Brake Point</button>
+          </div>
+        </div>
+
+        <!-- NPC 1 -->
+        <div class="vehicle-panel" data-vehicle-id="npc1">
+          <div class="vehicle-header">
+            <span class="vehicle-label">NPC 1</span>
+            <label><input type="checkbox" class="vehicle-enabled" checked /> Show</label>
+          </div>
+
+          <div class="vehicle-body">
+            <label>Initial Lane:
+              <input type="number" class="vehicle-lane" min="1" max="6" value="2" />
+            </label>
+
+            <label>
+              Color:
+              <input type="color" class="vehicle-color" value="#337bff" />
+              Speed (km/h):
+              <input type="number" class="vehicle-speed" step="1" value="54" />
+            </label>
+
+            <label>Curve Smoothness:
+              <input type="range" class="vehicle-smooth" min="0" max="1" step="0.1" value="0.2" />
+              <span class="vehicle-smooth-value">0.2</span>
+            </label>
+
+            <label>Waypoints:</label>
+            <textarea class="vehicle-waypoints"></textarea>
+            <button class="vehicle-add-wp">Add Waypoint</button>
+          </div>
+        </div>
+
+        <!-- NPC 2 -->
+        <div class="vehicle-panel" data-vehicle-id="npc2">
+          <div class="vehicle-header">
+            <span class="vehicle-label">NPC 2</span>
+            <label><input type="checkbox" class="vehicle-enabled" /> Show</label>
+          </div>
+
+          <div class="vehicle-body">
+            <label>Initial Lane:
+              <input type="number" class="vehicle-lane" min="1" max="6" value="1" />
+            </label>
+
+            <label>
+              Color:
+              <input type="color" class="vehicle-color" value="#2ecc71" />
+              Speed (km/h):
+              <input type="number" class="vehicle-speed" step="1" value="72" />
+            </label>
+
+            <label>Curve Smoothness:
+              <input type="range" class="vehicle-smooth" min="0" max="1" step="0.1" value="0.7" />
+              <span class="vehicle-smooth-value">0.7</span>
+            </label>
+
+            <label>Waypoints:</label>
+            <textarea class="vehicle-waypoints"></textarea>
+            <button class="vehicle-add-wp">Add Waypoint</button>
+          </div>
+        </div>
+
+        <!-- NPC 3 -->
+        <div class="vehicle-panel" data-vehicle-id="npc3">
+          <div class="vehicle-header">
+            <span class="vehicle-label">NPC 3</span>
+            <label><input type="checkbox" class="vehicle-enabled" /> Show</label>
+          </div>
+
+          <div class="vehicle-body">
+            <label>Initial Lane:
+              <input type="number" class="vehicle-lane" min="1" max="6" value="2" />
+            </label>
+
+            <label>
+              Color:
+              <input type="color" class="vehicle-color" value="#f39c12" />
+              Speed (km/h):
+              <input type="number" class="vehicle-speed" step="1" value="72" />
+            </label>
+
+            <label>Curve Smoothness:
+              <input type="range" class="vehicle-smooth" min="0" max="1" step="0.1" value="0.7" />
+              <span class="vehicle-smooth-value">0.7</span>
+            </label>
+
+            <label>Waypoints:</label>
+            <textarea class="vehicle-waypoints"></textarea>
+            <button class="vehicle-add-wp">Add Waypoint</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Canvas Area ===== -->
+      <div id="canvasContainer">
+        <canvas id="scenarioCanvas" width="900" height="200"></canvas>
+      </div>
+    </div>
+
+    <!-- ===== Advanced Settings Modal ===== -->
+    <div id="cameraModal" class="modal">
+      <div class="modal-content">
+        <h2>Advanced Settings</h2>
+
+        <!-- Road Settings -->
+        <div class="modal-group road-group">
+          <h3 class="modal-group-title">Road Settings</h3>
+          <label>Road Width [m]:
+            <input id="road-width" type="number" step="0.1" value="3.5" />
+          </label>
+        </div>
+
+        <!-- Camera Settings Box -->
+        <div class="modal-group camera-group">
+          <div class="camera-grid">
+
+            <!-- Left Column -->
+            <div class="camera-col">
+              <h3 class="camera-col-title">Camera Settings</h3>
+
+              <label>Location X [m]: <input id="cam-loc-x" type="number" step="0.001" value="2.050" /></label>
+              <label>Location Y [m]: <input id="cam-loc-y" type="number" step="0.001" value="0.000" /></label>
+              <label>Location Z [m]: <input id="cam-loc-z" type="number" step="0.001" value="1.300" /></label>
+
+              <label>Bank [deg]: <input id="cam-bank" type="number" step="0.01" value="0.0" /></label>
+              <label>Tilt [deg]: <input id="cam-tilt" type="number" step="0.01" value="0.0" /></label>
+              <label>Heading [deg]: <input id="cam-heading" type="number" step="0.01" value="0.0" /></label>
+
+              <label>Parent Length [m]: <input id="cam-length" type="number" step="0.001" value="5.100" /></label>
+              <label>Parent Width [m]: <input id="cam-width" type="number" step="0.001" value="2.120" /></label>
+              <label>Parent Height [m]: <input id="cam-height" type="number" step="0.001" value="1.490" /></label>
+            </div>
+
+            <!-- Right Column -->
+            <div class="camera-col">
+              <h3 class="camera-col-title">Basic</h3>
+
+              <label>Horizontal Resolution [pixel]: <input id="cam-hres" type="number" step="1" value="800" /></label>
+              <label>Vertical Resolution [pixel]: <input id="cam-vres" type="number" step="1" value="600" /></label>
+              <label>Frame rate [Hz]: <input id="cam-fps" type="number" step="1" value="40" /></label>
+
+              <label>Focal length [mm]: <input id="cam-focal" type="number" step="0.01" value="7.500" /></label>
+
+              <h4 class="modal-subtitle">CCD</h4>
+              <label>CCD size:
+                <select id="cam-ccd">
+                  <option value="1/4">1/4"</option>
+                  <option value="1/3">1/3"</option>
+                  <option value="1/2" selected>1/2"</option>
+                  <option value="2/3">2/3"</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </label>
+
+              <h4 class="modal-subtitle">Field of View</h4>
+              <label>FoV Azimuth [deg]: <input id="cam-fov-az" type="number" step="0.01" value="46.21265" /></label>
+              <label>FoV Elevation [deg]: <input id="cam-fov-el" type="number" step="0.01" value="35.48935" /></label>
+
+              <h4 class="modal-subtitle">Rendering</h4>
+              <label>Near Clip [m]: <input id="cam-near" type="number" step="0.01" value="0.10" /></label>
+              <label>Far Clip [m]: <input id="cam-far" type="number" step="0.1" value="300.0" /></label>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="cameraModalCancel" type="button">Cancel</button>
+          <button id="cameraModalOk" type="button">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
