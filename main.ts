@@ -1,13 +1,11 @@
-// ==== 型定義 ====
-
 interface Waypoint {
-  x: number;      // 0..1 (道路進行方向, 0=0m, 1=1000m)
-  offset: number; // レーン中心からの横方向オフセット(laneHeight*0.5 単位)
+  x: number;      
+  offset: number; 
 }
 
 interface BrakePoint {
-  x: number;      // 0..1 (道路進行方向)
-  decelerationMps2: number; // 減速度 [m/s²]
+  x: number;      
+  decelerationMps2: number; 
 }
 
 interface Vehicle {
@@ -15,21 +13,19 @@ interface Vehicle {
   label: string;
   color: string;
   enabled: boolean;
-  lane: number;       // 初期レーン
+  lane: number;      
   waypoints: Waypoint[];
-  smoothness: number; // 0..1 曲がり具合
-  speedKmh: number;   // 速度 [km/h]
-  brakePoints?: BrakePoint[]; // ブレーキポイント（Egoのみ）
+  smoothness: number; 
+  speedKmh: number;   
+  brakePoints?: BrakePoint[]; 
 }
 
 interface DragState {
   vehicleIndex: number;
   waypointIndex: number;
-  isBrakePoint?: boolean; // ブレーキポイントのドラッグか
+  isBrakePoint?: boolean; 
   brakePointIndex?: number;
 }
-
-// ==== DOM ====
 
 const canvas = document.getElementById("scenarioCanvas") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
@@ -39,10 +35,8 @@ const distanceInput = document.getElementById("distanceInput") as HTMLInputEleme
 const resetButton = document.getElementById("resetButton") as HTMLButtonElement;
 
 let lanesPerSide = clamp(parseInt(lanesInput.value, 10) || 2, 1, 6);
-let totalDistanceM = parseInt(distanceInput.value, 10) || 500; // x軸方向の総距離 [m]
+let totalDistanceM = parseInt(distanceInput.value, 10) || 500; 
 
-
-//camera設定
 const openBtn = document.getElementById("openCameraDialog")!;
 const modal = document.getElementById("cameraModal")!;
 const okBtn = document.getElementById("cameraModalOk")!;
@@ -51,19 +45,15 @@ const cancelBtn = document.getElementById("cameraModalCancel")!;
 openBtn.onclick = () => modal.classList.add("show");
 cancelBtn.onclick = () => modal.classList.remove("show");
 okBtn.onclick = () => {
-  // 入力値を読み取って cameraConfig に保存する処理など
   modal.classList.remove("show");
 };
 modal.addEventListener("click", (e) => {
   if (e.target === modal) modal.classList.remove("show");
 });
 
-// offset のクランプ範囲(±何レーン分まで動かせるか)
 function offsetLimit(): number {
-  return lanesPerSide * 1.5; // 例: 3レーンなら ±4.5 レーン相当まで
+  return lanesPerSide * 1.5; 
 }
-
-// ==== 車両状態 ====
 
 const vehicles: Vehicle[] = [
   {
@@ -79,7 +69,7 @@ const vehicles: Vehicle[] = [
       { x: 0.5, offset: 0 },
       { x: 1, offset: 0 },
     ],
-    brakePoints: [], // Ego用ブレーキポイント
+    brakePoints: [], 
   },
   {
     id: "npc1",
@@ -119,8 +109,6 @@ const vehicles: Vehicle[] = [
 
 let dragState: DragState | null = null;
 
-// ==== ユーティリティ ====
-
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
@@ -139,13 +127,11 @@ function parseWaypoints(text: string): Waypoint[] {
     const off = parseFloat(parts[1]);
     if (isNaN(x) || isNaN(off)) continue;
     if (x < 0 || x > 1) continue;
-    // 小数点第2位まで丸める
     res.push({ 
       x: Math.round(x * 100) / 100, 
       offset: Math.round(off * 100) / 100 
     });
   }
-  // x でソート
   res.sort((a, b) => a.x - b.x);
   return res;
 }
@@ -169,13 +155,11 @@ function parseBrakePoints(text: string): BrakePoint[] {
     const decel = parseFloat(parts[1]);
     if (isNaN(x) || isNaN(decel)) continue;
     if (x < 0 || x > 1) continue;
-    // 小数点第2位まで丸める
     res.push({ 
       x: Math.round(x * 100) / 100, 
       decelerationMps2: Math.round(decel * 100) / 100 
     });
   }
-  // x でソート
   res.sort((a, b) => a.x - b.x);
   return res;
 }
@@ -185,7 +169,6 @@ function brakePointsToText(bps: BrakePoint[]): string {
   return sorted.map((bp) => `${bp.x.toFixed(2)},${bp.decelerationMps2.toFixed(2)}`).join("\n");
 }
 
-// Waypoint -> Canvas 座標変換
 function waypointToCanvas(
   vehicle: Vehicle,
   wp: Waypoint,
@@ -200,7 +183,6 @@ function waypointToCanvas(
   const baseCenterY = laneAreaBottom - (vehicle.lane - 0.5) * laneHeight;
   const lateralScale = laneHeight * 0.5;
 
-  // 左右の余白を考慮
   const marginLeft = 60;
   const marginRight = 20;
   const drawableWidth = w - marginLeft - marginRight;
@@ -211,9 +193,6 @@ function waypointToCanvas(
   return { x: xPix, y: yPix };
 }
 
-
-
-// cubic Bézier 補間
 function cubicBezierPoint(
   p0: { x: number; y: number },
   c1: { x: number; y: number },
@@ -233,10 +212,7 @@ function cubicBezierPoint(
   };
 }
 
-// ==== UI 初期化 ====
-
 function setupUI(): void {
-  // レーン数変更
   lanesInput.addEventListener("input", () => {
     const n = parseInt(lanesInput.value, 10);
     if (!isNaN(n)) {
@@ -250,7 +226,6 @@ function setupUI(): void {
     }
   });
 
-  // 総距離変更
   distanceInput.addEventListener("input", () => {
     const d = parseInt(distanceInput.value, 10);
     if (!isNaN(d) && d > 0) {
@@ -260,7 +235,6 @@ function setupUI(): void {
     }
   });
 
-  // 各 Vehicle パネル
   const panels = document.querySelectorAll<HTMLDivElement>(".vehicle-panel");
   panels.forEach((panel) => {
     const vehicleId = panel.dataset["vehicleId"];
@@ -285,7 +259,6 @@ function setupUI(): void {
       ".vehicle-smooth-value"
     );
     
-    // Ego専用: ブレーキポイント
     const bpTextarea =
       panel.querySelector<HTMLTextAreaElement>(".vehicle-brakepoints");
     const addBpButton =
@@ -356,7 +329,6 @@ function setupUI(): void {
       });
     }
 
-    // ブレーキポイント処理 (Egoのみ)
     if (bpTextarea && vehicle.id === "ego") {
       if (vehicle.brakePoints) {
         bpTextarea.value = brakePointsToText(vehicle.brakePoints);
@@ -379,7 +351,7 @@ function setupUI(): void {
         }
         const newBp: BrakePoint = {
           x: newX,
-          decelerationMps2: 3.0, // デフォルト減速度 3.0 m/s²
+          decelerationMps2: 3.0, 
         };
         vehicle.brakePoints.push(newBp);
         syncUIFromState();
@@ -401,7 +373,6 @@ function setupUI(): void {
     }
   });
 
-  // リセット
   resetButton.addEventListener("click", () => {
     lanesPerSide = 2;
     lanesInput.value = "2";
@@ -447,29 +418,23 @@ function setupUI(): void {
     draw();
   });
 
-  // ウィンドウリサイズ時にキャンバスサイズを調整
   function resizeCanvas(): void {
     const container = document.getElementById("canvasContainer");
     if (!container) return;
     
     const rect = container.getBoundingClientRect();
-    const padding = 40; // コンテナの余白
+    const padding = 40;
     
-    // 利用可能なスペース
     const availableWidth = rect.width - padding;
     const availableHeight = rect.height - padding;
     
-    // キャンバスの内部解像度を設定
     canvas.width = Math.max(400, availableWidth);
     canvas.height = Math.max(200, availableHeight);
     
     draw();
   }
 
-  // 初回リサイズ
   resizeCanvas();
-
-  // ウィンドウリサイズ時に再調整
   window.addEventListener("resize", resizeCanvas);
 
   canvas.addEventListener("mousedown", onCanvasMouseDown);
@@ -519,27 +484,19 @@ function syncUIFromState(): void {
   });
 }
 
-// ==== 描画 ====
-
 function draw(): void {
   const w = canvas.width;
   const h = canvas.height;
 
   ctx.clearRect(0, 0, w, h);
 
-  // 背景
   ctx.fillStyle = "#1f2933";
   ctx.fillRect(0, 0, w, h);
 
-  // ============================
-  // 1. x 軸方向の距離グリッド
-  // ============================
-  // 左右の余白
   const marginLeft = 60;
   const marginRight = 20;
   const drawableWidth = w - marginLeft - marginRight;
   
-  // グリッド間隔を自動調整
   let stepM: number;
   if (totalDistanceM <= 500) {
     stepM = 50;
@@ -556,10 +513,9 @@ function draw(): void {
   ctx.lineWidth = 1;
 
   for (let i = 0; i <= nSteps; i++) {
-    const t = i / nSteps; // 0..1
+    const t = i / nSteps;
     const xPix = marginLeft + t * drawableWidth;
 
-    // 縦の点線
     ctx.save();
     ctx.setLineDash([4, 8]);
     ctx.strokeStyle = "#374151";
@@ -569,7 +525,6 @@ function draw(): void {
     ctx.stroke();
     ctx.restore();
 
-    // x 軸の目盛り(下端)
     const yAxis = h - 4;
 
     ctx.strokeStyle = "#9ca3af";
@@ -587,22 +542,17 @@ function draw(): void {
     ctx.fillText(distLabel, xPix, yAxis - 2);
   }
 
-  // x 軸のベースライン
   ctx.strokeStyle = "#9ca3af";
   ctx.beginPath();
   ctx.moveTo(marginLeft, h);
   ctx.lineTo(marginLeft + drawableWidth, h);
   ctx.stroke();
 
-  // ============================
-  // 2. レーン(高さ 80px 固定)
-  // ============================
-  const laneHeight = 80;                       // ★ レーン幅 80px 固定
+  const laneHeight = 80;                       
   const totalLaneHeight = laneHeight * lanesPerSide;
   const laneAreaTop = (h - totalLaneHeight) / 2;
   const laneAreaBottom = laneAreaTop + totalLaneHeight;
 
-  // レーン横線
   ctx.strokeStyle = "#4b5563";
   ctx.lineWidth = 1;
   for (let i = 0; i <= lanesPerSide; i++) {
@@ -613,7 +563,6 @@ function draw(): void {
     ctx.stroke();
   }
 
-  // レーン番号(Lane1 が一番下、LaneN が一番上)
   ctx.fillStyle = "#9ca3af";
   ctx.font = "12px 'Times New Roman', serif";
   ctx.textAlign = "left";
@@ -623,10 +572,7 @@ function draw(): void {
     ctx.fillText(`Lane ${lane}`, 8, centerY);
   }
 
-  // ============================
-  // 3. 車両の軌跡 & 時間プロット
-  // ============================
-  const pixelsPerMeterX = drawableWidth / totalDistanceM; // x方向: totalDistanceM → 描画可能幅
+  const pixelsPerMeterX = drawableWidth / totalDistanceM;
 
   vehicles.forEach((v) => {
     if (!v.enabled) return;
@@ -639,14 +585,11 @@ function draw(): void {
     ctx.strokeStyle = v.color;
     ctx.lineWidth = 2;
 
-    // 軌跡サンプル(時間プロットにも使う)
     const pathSamples: { x: number; y: number }[] = [];
 
-    // ---- 軌跡(線)の描画 ----
     if (pts.length === 1) {
       pathSamples.push({ x: pts[0].x, y: pts[0].y });
     } else if (v.smoothness <= 0.01 || pts.length === 2) {
-      // 折れ線
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       pathSamples.push({ x: pts[0].x, y: pts[0].y });
@@ -667,12 +610,11 @@ function draw(): void {
       }
       ctx.stroke();
     } else {
-      // Bézier 曲線で滑らかに
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       pathSamples.push({ x: pts[0].x, y: pts[0].y });
 
-      const factor = 0.35 * v.smoothness;  // 曲がり具合
+      const factor = 0.35 * v.smoothness;
       const stepsPerSegment = 24;
       const n = pts.length;
 
@@ -688,7 +630,6 @@ function draw(): void {
           continue;
         }
 
-        // 始点側接線方向
         let prevDirX: number;
         let prevDirY: number;
         if (i === 0) {
@@ -703,7 +644,6 @@ function draw(): void {
           prevDirY = vy / l;
         }
 
-        // 終点側接線方向
         let nextDirX: number;
         let nextDirY: number;
         if (i + 2 >= n) {
@@ -734,24 +674,20 @@ function draw(): void {
       ctx.stroke();
     }
 
-    // ---- Waypoint の描画 ----
     wpsSorted.forEach((wp, idx) => {
       const pos = waypointToCanvas(v, wp, w, h);
 
-      // 塗りつぶし丸
       ctx.beginPath();
       ctx.fillStyle = v.color;
       ctx.arc(pos.x, pos.y, 6, 0, Math.PI * 2);
       ctx.fill();
 
-      // 外側の白円
       ctx.beginPath();
       ctx.strokeStyle = "#ffffffaa";
       ctx.lineWidth = 1;
       ctx.arc(pos.x, pos.y, 8, 0, Math.PI * 2);
       ctx.stroke();
 
-      // index ラベル
       ctx.fillStyle = "#e5e7eb";
       ctx.font = "10px 'Times New Roman', serif";
       ctx.textAlign = "center";
@@ -759,7 +695,6 @@ function draw(): void {
       ctx.fillText(String(idx), pos.x, pos.y - 12);
     });
 
-    // ---- ブレーキポイントの描画 (Egoのみ) ----
     if (v.id === "ego" && v.brakePoints) {
       v.brakePoints.forEach((bp, idx) => {
         const marginLeft = 60;
@@ -767,10 +702,8 @@ function draw(): void {
         const drawableWidth = w - marginLeft - marginRight;
         const xPix = marginLeft + bp.x * drawableWidth;
         
-        // ブレーキポイントの位置を軌跡上で計算
-        let yPix = h / 2; // デフォルト
+        let yPix = h / 2;
         
-        // 軌跡サンプルから対応するy座標を見つける
         if (pathSamples.length >= 2) {
           let j = 0;
           while (j < pathSamples.length - 1 && pathSamples[j + 1].x < xPix) {
@@ -783,7 +716,6 @@ function draw(): void {
           yPix = pA.y + (pB.y - pA.y) * alpha;
         }
         
-        // ブレーキマーク（三角形）
         ctx.beginPath();
         ctx.fillStyle = "#ffaa00";
         ctx.moveTo(xPix, yPix - 10);
@@ -792,12 +724,10 @@ function draw(): void {
         ctx.closePath();
         ctx.fill();
         
-        // 枠線
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1;
         ctx.stroke();
         
-        // 減速度ラベル
         ctx.fillStyle = "#ffffff";
         ctx.font = "9px 'Times New Roman', serif";
         ctx.textAlign = "center";
@@ -806,7 +736,6 @@ function draw(): void {
       });
     }
 
-    // ---- 時間・速度に基づく点プロット ----
     const samplesForTime =
       pathSamples.length >= 2 ? pathSamples : pts.map((p) => ({ ...p }));
     if (samplesForTime.length < 2) return;
@@ -814,24 +743,22 @@ function draw(): void {
     const startXPix = samplesForTime[0].x;
     const maxXPix = samplesForTime[samplesForTime.length - 1].x;
 
-    const speedMps = Math.max(0, v.speedKmh / 3.6); // km/h -> m/s
+    const speedMps = Math.max(0, v.speedKmh / 3.6);
     if (speedMps <= 0) return;
 
-    // 軌跡の総距離を計算
-    const startXNormalized = (samplesForTime[0].x - 60) / (w - 80); // 余白を考慮
+    const startXNormalized = (samplesForTime[0].x - 60) / (w - 80);
     const maxXNormalized = (samplesForTime[samplesForTime.length - 1].x - 60) / (w - 80);
     const trajectoryDistanceM = (maxXNormalized - startXNormalized) * totalDistanceM;
     
-    const durationSec = trajectoryDistanceM / speedMps; // 軌跡全体を走行する時間
-    const dt = 0.5;        // 0.5秒刻み
+    const durationSec = trajectoryDistanceM / speedMps;
+    const dt = 0.5;
 
     for (let tSec = 0; tSec <= durationSec + 1e-6; tSec += dt) {
-      const distM = speedMps * tSec; // [m]
+      const distM = speedMps * tSec;
       const targetX = startXPix + distM * pixelsPerMeterX;
 
       if (targetX > maxXPix) break;
 
-      // targetX 近辺のサンプルを線形補間
       let j = 0;
       while (
         j < samplesForTime.length - 1 &&
@@ -845,7 +772,6 @@ function draw(): void {
       const alpha = clamp((targetX - pA.x) / dx, 0, 1);
       const yPix = pA.y + (pB.y - pA.y) * alpha;
 
-      // 小さい塗りつぶし点
       ctx.beginPath();
       ctx.fillStyle = v.color;
       ctx.arc(targetX, yPix, 3, 0, Math.PI * 2);
@@ -853,9 +779,6 @@ function draw(): void {
     }
   });
 }
-
-
-// ==== マウス操作(ウェイポイントドラッグ) ====
 
 function getCanvasCoords(evt: MouseEvent): { x: number; y: number } | null {
   const rect = canvas.getBoundingClientRect();
@@ -875,7 +798,6 @@ function onCanvasMouseDown(evt: MouseEvent): void {
   const h = canvas.height;
   const hitRadius = 10;
 
-  // まずブレーキポイントをチェック（Egoのみ）
   for (let vi = 0; vi < vehicles.length; vi++) {
     const v = vehicles[vi];
     if (!v.enabled || v.id !== "ego" || !v.brakePoints) continue;
@@ -887,12 +809,10 @@ function onCanvasMouseDown(evt: MouseEvent): void {
       const drawableWidth = w - marginLeft - marginRight;
       const xPix = marginLeft + bp.x * drawableWidth;
       
-      // y座標を軌跡から取得
       const wpsSorted = [...v.waypoints].sort((a, b) => a.x - b.x);
       const pts = wpsSorted.map((wp) => waypointToCanvas(v, wp, w, h));
       const pathSamples: { x: number; y: number }[] = [];
       
-      // 簡易的にptsをpathSamplesとして使用
       pts.forEach(p => pathSamples.push(p));
       
       let yPix = h / 2;
@@ -909,7 +829,7 @@ function onCanvasMouseDown(evt: MouseEvent): void {
       }
       
       const dx = xPix - pos.x;
-      const dy = yPix - 15 - pos.y; // 三角形の中心付近
+      const dy = yPix - 15 - pos.y;
       if (dx * dx + dy * dy <= hitRadius * hitRadius) {
         dragState = { 
           vehicleIndex: vi, 
@@ -922,7 +842,6 @@ function onCanvasMouseDown(evt: MouseEvent): void {
     }
   }
 
-  // 次にウェイポイントをチェック
   for (let vi = 0; vi < vehicles.length; vi++) {
     const v = vehicles[vi];
     if (!v.enabled) continue;
@@ -948,7 +867,6 @@ function onCanvasMouseMove(evt: MouseEvent): void {
 
   const v = vehicles[dragState.vehicleIndex];
   
-  // ブレーキポイントのドラッグ
   if (dragState.isBrakePoint && dragState.brakePointIndex !== undefined && v.brakePoints) {
     const bp = v.brakePoints[dragState.brakePointIndex];
     const w = canvas.width;
@@ -956,13 +874,12 @@ function onCanvasMouseMove(evt: MouseEvent): void {
     const marginRight = 20;
     const drawableWidth = w - marginLeft - marginRight;
     const newX = clamp((pos.x - marginLeft) / drawableWidth, 0, 1);
-    bp.x = Math.round(newX * 100) / 100; // 小数点第2位まで
+    bp.x = Math.round(newX * 100) / 100;
     syncUIFromState();
     draw();
     return;
   }
   
-  // ウェイポイントのドラッグ
   const wp = v.waypoints[dragState.waypointIndex];
 
   const w = canvas.width;
@@ -984,8 +901,8 @@ function onCanvasMouseMove(evt: MouseEvent): void {
     offsetLimit()
   );
 
-  wp.x = Math.round(newX * 100) / 100; // 小数点第2位まで
-  wp.offset = Math.round(newOffset * 100) / 100; // 小数点第2位まで
+  wp.x = Math.round(newX * 100) / 100;
+  wp.offset = Math.round(newOffset * 100) / 100;
 
   syncUIFromState();
   draw();
@@ -995,14 +912,10 @@ function onCanvasMouseUp(_evt: MouseEvent): void {
   dragState = null;
 }
 
-// =====================
-//     PDF EXPORT
-// =====================
 function setupPdfExport(): void {
   const button = document.getElementById("exportPdfButton");
   if (!button) return;
 
-  // 複数 ID 候補から最初に見つかった value を返すヘルパ
   const getFieldValue = (ids: string[]): string => {
     for (const id of ids) {
       const el = document.getElementById(id) as
@@ -1024,7 +937,6 @@ function setupPdfExport(): void {
     }
     const { jsPDF } = jspdfModule;
 
-    // A4 landscape
     const pdf = new jsPDF({
       orientation: "landscape",
       unit: "mm",
@@ -1075,7 +987,6 @@ function setupPdfExport(): void {
       }
     };
 
-    // ----- Scenario Settings -----
     pdf.setFontSize(15);
     pdf.text("Scenario Settings", x, y);
     y += 7;
@@ -1086,7 +997,6 @@ function setupPdfExport(): void {
     pdf.text(`Total Distance: ${totalDistanceM} m`, x, y);
     y += 7;
 
-    // ----- Vehicles -----
     const nameOf = (id: string): string => {
       switch (id) {
         case "ego": return "Ego Vehicle";
@@ -1111,7 +1021,6 @@ function setupPdfExport(): void {
       pdf.text(`Speed: ${v.speedKmh.toFixed(1)} km/h`, x, y); y += 4;
       pdf.text(`Smoothness: ${v.smoothness.toFixed(1)}`, x, y); y += 4;
 
-      // ---- Waypoints（長くなったら自動改行）----
       const wpStr = v.waypoints
         .map((w) => `(${w.x.toFixed(1)}, ${w.offset.toFixed(1)})`)
         .join(", ");
@@ -1124,8 +1033,6 @@ function setupPdfExport(): void {
         y += 4;
       });
 
-
-      // ---- Brake Points も同じく折り返し ----
       if (v.brakePoints && v.brakePoints.length > 0) {
         const bpStr = v.brakePoints
           .map(
@@ -1138,16 +1045,14 @@ function setupPdfExport(): void {
           columnWidth
         );
         bpLines.forEach((line: string) => {
-  pdf.text(line, x, y);
-  y += 4;
-});
-
+          pdf.text(line, x, y);
+          y += 4;
+        });
       }
 
       y += 3;
     });
 
-    // ----- Advanced Settings -----
     moveToNextColumnIfNeeded();
     y += 4;
 
@@ -1155,7 +1060,6 @@ function setupPdfExport(): void {
     pdf.text("Advanced Settings", x, y);
     y += 6;
 
-    // Road Settings
     pdf.setFontSize(11);
     pdf.text("Road Settings", x, y);
     y += 5;
@@ -1167,7 +1071,6 @@ function setupPdfExport(): void {
 
     moveToNextColumnIfNeeded();
 
-    // Camera Settings
     pdf.setFontSize(11);
     pdf.text("Camera Settings", x, y);
     y += 5;
@@ -1238,10 +1141,6 @@ function setupPdfExport(): void {
     pdf.save("scenario.pdf");
   });
 }
-
-
-
-// ==== 初期化 ====
 
 setupUI();
 syncUIFromState();
