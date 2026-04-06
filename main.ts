@@ -1,11 +1,20 @@
+// ============================================================
+//  Types
+// ============================================================
+
+interface Point {
+  x: number;
+  y: number;
+}
+
 interface Waypoint {
-  x: number;      
-  offset: number; 
+  x: number;
+  offset: number;
 }
 
 interface BrakePoint {
-  x: number;      
-  decelerationMps2: number; 
+  x: number;
+  decelerationMps2: number;
 }
 
 interface Vehicle {
@@ -13,197 +22,268 @@ interface Vehicle {
   label: string;
   color: string;
   enabled: boolean;
-  lane: number;      
+  lane: number;
   waypoints: Waypoint[];
-  smoothness: number; 
-  speedKmh: number;   
-  brakePoints?: BrakePoint[]; 
+  smoothness: number;
+  speedKmh: number;
+  brakePoints: BrakePoint[];
 }
 
 interface DragState {
   vehicleIndex: number;
   waypointIndex: number;
-  isBrakePoint?: boolean; 
+  isBrakePoint?: boolean;
   brakePointIndex?: number;
 }
 
-const canvas = document.getElementById("scenarioCanvas") as HTMLCanvasElement;
-const ctx = canvas.getContext("2d")!;
+interface VehiclePanelElements {
+  enabled: HTMLInputElement | null;
+  lane: HTMLInputElement | null;
+  color: HTMLInputElement | null;
+  speed: HTMLInputElement | null;
+  waypoints: HTMLTextAreaElement | null;
+  addWaypoint: HTMLButtonElement | null;
+  brakePoints: HTMLTextAreaElement | null;
+  addBrakePoint: HTMLButtonElement | null;
+  smooth: HTMLInputElement | null;
+  smoothValue: HTMLSpanElement | null;
+}
 
+// ============================================================
+//  Constants
+// ============================================================
+
+const MARGIN_LEFT = 60;
+const MARGIN_RIGHT = 20;
+const LANE_HEIGHT = 80;
+const HIT_RADIUS = 10;
+const MAX_WAYPOINTS = 10;
+const MAX_BRAKE_POINTS = 10;
+const TIME_STEP_SEC = 0.5;
+const WAYPOINT_RADIUS = 6;
+const WAYPOINT_OUTLINE_RADIUS = 8;
+const TIME_DOT_RADIUS = 3;
+const DEFAULT_DECELERATION = 3.0;
+const CANVAS_MIN_WIDTH = 400;
+const CANVAS_MIN_HEIGHT = 200;
+const CANVAS_PADDING = 40;
+const LINEAR_STEPS_PER_SEGMENT = 20;
+const BEZIER_STEPS_PER_SEGMENT = 24;
+const BRAKE_TRIANGLE_HEIGHT = 10;
+const BRAKE_TRIANGLE_HALF_WIDTH = 6;
+const BRAKE_TRIANGLE_TOP_OFFSET = 20;
+
+const VEHICLE_DISPLAY_NAMES: Record<string, string> = {
+  ego: "Ego Vehicle",
+  npc1: "NPC 1",
+  npc2: "NPC 2",
+  npc3: "NPC 3",
+};
+
+const MODAL_FIELD_IDS = [
+  "road-width",
+  "cam-loc-x", "cam-loc-y", "cam-loc-z",
+  "cam-bank", "cam-tilt", "cam-heading",
+  "cam-length", "cam-width", "cam-height",
+  "cam-hres", "cam-vres", "cam-fps", "cam-focal",
+  "cam-ccd",
+  "cam-fov-az", "cam-fov-el",
+  "cam-near", "cam-far",
+];
+
+// ============================================================
+//  DOM References
+// ============================================================
+
+const canvas = document.getElementById("scenarioCanvas") as HTMLCanvasElement;
+
+function getContext2D(c: HTMLCanvasElement): CanvasRenderingContext2D {
+  const context = c.getContext("2d");
+  if (!context) throw new Error("Failed to get 2D rendering context");
+  return context;
+}
+
+const ctx = getContext2D(canvas);
 const lanesInput = document.getElementById("lanesInput") as HTMLInputElement;
 const distanceInput = document.getElementById("distanceInput") as HTMLInputElement;
 const resetButton = document.getElementById("resetButton") as HTMLButtonElement;
+const modalOpenButton = document.getElementById("openCameraDialog")!;
+const modal = document.getElementById("cameraModal")!;
+const modalOkButton = document.getElementById("cameraModalOk")!;
+const modalCancelButton = document.getElementById("cameraModalCancel")!;
+
+// ============================================================
+//  State
+// ============================================================
 
 let lanesPerSide = clamp(parseInt(lanesInput.value, 10) || 2, 1, 6);
-let totalDistanceM = parseInt(distanceInput.value, 10) || 500; 
+let totalDistanceM = parseInt(distanceInput.value, 10) || 500;
+let dragState: DragState | null = null;
+let dragRafPending = false;
+let modalSnapshot: Record<string, string> = {};
 
-const openBtn = document.getElementById("openCameraDialog")!;
-const modal = document.getElementById("cameraModal")!;
-const okBtn = document.getElementById("cameraModalOk")!;
-const cancelBtn = document.getElementById("cameraModalCancel")!;
+const vehicles: Vehicle[] = createInitialVehicles();
 
-openBtn.onclick = () => modal.classList.add("show");
-cancelBtn.onclick = () => modal.classList.remove("show");
-okBtn.onclick = () => {
-  modal.classList.remove("show");
-};
-modal.addEventListener("click", (e) => {
-  if (e.target === modal) modal.classList.remove("show");
-});
+// ============================================================
+//  Utilities
+// ============================================================
 
-function offsetLimit(): number {
-  return lanesPerSide * 1.5; 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
-const vehicles: Vehicle[] = [
-  {
-    id: "ego",
-    label: "Ego",
-    color: "#ff4444",
-    enabled: true,
-    lane: 1,
-    smoothness: 0.3,
-    speedKmh: 60,
-    waypoints: [
-      { x: 0, offset: 0 },
-      { x: 0.5, offset: 0 },
-      { x: 1, offset: 0 },
-    ],
-    brakePoints: [], 
-  },
-  {
-    id: "npc1",
-    label: "NPC 1",
-    color: "#337bff",
-    enabled: true,
-    lane: 2,
-    smoothness: 0.3,
-    speedKmh: 60,
-    waypoints: [
-      { x: 0, offset: 0 },
-      { x: 0.5, offset: 0 },
-      { x: 1, offset: 0 },
-    ],
-  },
-  {
-    id: "npc2",
-    label: "NPC 2",
-    color: "#2ecc71",
-    enabled: false,
-    lane: 1,
-    smoothness: 0.3,
-    speedKmh: 60,
-    waypoints: [],
-  },
-  {
-    id: "npc3",
-    label: "NPC 3",
-    color: "#f39c12",
-    enabled: false,
-    lane: 2,
-    smoothness: 0.3,
-    speedKmh: 60,
-    waypoints: [],
-  },
-];
+function roundTo2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
 
-let dragState: DragState | null = null;
+function getDrawableWidth(canvasWidth: number): number {
+  return canvasWidth - MARGIN_LEFT - MARGIN_RIGHT;
+}
 
-function clamp(n: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, n));
+function offsetLimit(): number {
+  return lanesPerSide * 1.5;
+}
+
+function kmhToMps(kmh: number): number {
+  return kmh / 3.6;
+}
+
+function computeLaneLayout(canvasHeight: number): { top: number; bottom: number } {
+  const totalHeight = LANE_HEIGHT * lanesPerSide;
+  const top = (canvasHeight - totalHeight) / 2;
+  return { top, bottom: top + totalHeight };
+}
+
+function laneCenterY(canvasHeight: number, lane: number): number {
+  const { bottom } = computeLaneLayout(canvasHeight);
+  return bottom - (lane - 0.5) * LANE_HEIGHT;
+}
+
+function distanceGridStep(): number {
+  if (totalDistanceM <= 500) return 50;
+  if (totalDistanceM <= 1000) return 100;
+  if (totalDistanceM <= 2000) return 200;
+  return 500;
+}
+
+// ============================================================
+//  Initial Vehicle Data
+// ============================================================
+
+function createInitialVehicles(): Vehicle[] {
+  return [
+    {
+      id: "ego", label: "Ego", color: "#ff4444",
+      enabled: true, lane: 1, smoothness: 0.7, speedKmh: 72,
+      waypoints: [{ x: 0, offset: 0 }, { x: 0.5, offset: 0 }, { x: 1, offset: 0 }],
+      brakePoints: [],
+    },
+    {
+      id: "npc1", label: "NPC 1", color: "#337bff",
+      enabled: true, lane: 2, smoothness: 0.2, speedKmh: 54,
+      waypoints: [{ x: 0, offset: 0 }, { x: 0.5, offset: 0 }, { x: 1, offset: 0 }],
+      brakePoints: [],
+    },
+    {
+      id: "npc2", label: "NPC 2", color: "#2ecc71",
+      enabled: false, lane: 1, smoothness: 0.7, speedKmh: 72,
+      waypoints: [], brakePoints: [],
+    },
+    {
+      id: "npc3", label: "NPC 3", color: "#f39c12",
+      enabled: false, lane: 2, smoothness: 0.7, speedKmh: 72,
+      waypoints: [], brakePoints: [],
+    },
+  ];
+}
+
+// ============================================================
+//  CSV Parsing / Serialization
+// ============================================================
+
+function parseCsvLines(text: string): [number, number][] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .reduce<[number, number][]>((result, line) => {
+      const parts = line.split(",");
+      if (parts.length < 2) return result;
+
+      const a = parseFloat(parts[0]);
+      const b = parseFloat(parts[1]);
+      if (isNaN(a) || isNaN(b)) return result;
+      if (a < 0 || a > 1) return result;
+
+      result.push([roundTo2(a), roundTo2(b)]);
+      return result;
+    }, []);
 }
 
 function parseWaypoints(text: string): Waypoint[] {
-  const lines = text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-
-  const res: Waypoint[] = [];
-  for (const line of lines) {
-    const parts = line.split(",");
-    if (parts.length < 2) continue;
-    const x = parseFloat(parts[0]);
-    const off = parseFloat(parts[1]);
-    if (isNaN(x) || isNaN(off)) continue;
-    if (x < 0 || x > 1) continue;
-    res.push({ 
-      x: Math.round(x * 100) / 100, 
-      offset: Math.round(off * 100) / 100 
-    });
-  }
-  res.sort((a, b) => a.x - b.x);
-  return res;
-}
-
-function waypointsToText(wps: Waypoint[]): string {
-  const sorted = [...wps].sort((a, b) => a.x - b.x);
-  return sorted.map((wp) => `${wp.x.toFixed(2)},${wp.offset.toFixed(2)}`).join("\n");
+  return parseCsvLines(text)
+    .map(([x, offset]) => ({ x, offset }))
+    .sort((a, b) => a.x - b.x);
 }
 
 function parseBrakePoints(text: string): BrakePoint[] {
-  const lines = text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
+  return parseCsvLines(text)
+    .map(([x, decelerationMps2]) => ({ x, decelerationMps2 }))
+    .sort((a, b) => a.x - b.x);
+}
 
-  const res: BrakePoint[] = [];
-  for (const line of lines) {
-    const parts = line.split(",");
-    if (parts.length < 2) continue;
-    const x = parseFloat(parts[0]);
-    const decel = parseFloat(parts[1]);
-    if (isNaN(x) || isNaN(decel)) continue;
-    if (x < 0 || x > 1) continue;
-    res.push({ 
-      x: Math.round(x * 100) / 100, 
-      decelerationMps2: Math.round(decel * 100) / 100 
-    });
+function waypointsToText(waypoints: Waypoint[]): string {
+  return [...waypoints]
+    .sort((a, b) => a.x - b.x)
+    .map((wp) => `${wp.x.toFixed(2)},${wp.offset.toFixed(2)}`)
+    .join("\n");
+}
+
+function brakePointsToText(brakePoints: BrakePoint[]): string {
+  return [...brakePoints]
+    .sort((a, b) => a.x - b.x)
+    .map((bp) => `${bp.x.toFixed(2)},${bp.decelerationMps2.toFixed(2)}`)
+    .join("\n");
+}
+
+// ============================================================
+//  Coordinate Conversion
+// ============================================================
+
+function waypointToCanvas(vehicle: Vehicle, wp: Waypoint, canvasWidth: number, canvasHeight: number): Point {
+  const baseY = laneCenterY(canvasHeight, vehicle.lane);
+  const lateralScale = LANE_HEIGHT * 0.5;
+  const drawableWidth = getDrawableWidth(canvasWidth);
+
+  return {
+    x: MARGIN_LEFT + clamp(wp.x, 0, 1) * drawableWidth,
+    y: baseY - wp.offset * lateralScale,
+  };
+}
+
+function interpolateYOnPath(pathSamples: Point[], targetX: number): number {
+  let index = 0;
+  while (index < pathSamples.length - 1 && pathSamples[index + 1].x < targetX) {
+    index++;
   }
-  res.sort((a, b) => a.x - b.x);
-  return res;
+
+  const pointA = pathSamples[index];
+  const pointB = pathSamples[Math.min(index + 1, pathSamples.length - 1)];
+  const dx = pointB.x - pointA.x || 1;
+  const alpha = clamp((targetX - pointA.x) / dx, 0, 1);
+
+  return pointA.y + (pointB.y - pointA.y) * alpha;
 }
 
-function brakePointsToText(bps: BrakePoint[]): string {
-  const sorted = [...bps].sort((a, b) => a.x - b.x);
-  return sorted.map((bp) => `${bp.x.toFixed(2)},${bp.decelerationMps2.toFixed(2)}`).join("\n");
-}
+// ============================================================
+//  Bézier Path Computation
+// ============================================================
 
-function waypointToCanvas(
-  vehicle: Vehicle,
-  wp: Waypoint,
-  w: number,
-  h: number
-): { x: number; y: number } {
-  const laneHeight = 80;
-  const totalLaneHeight = laneHeight * lanesPerSide;
-  const laneAreaTop = (h - totalLaneHeight) / 2;
-  const laneAreaBottom = laneAreaTop + totalLaneHeight;
-
-  const baseCenterY = laneAreaBottom - (vehicle.lane - 0.5) * laneHeight;
-  const lateralScale = laneHeight * 0.5;
-
-  const marginLeft = 60;
-  const marginRight = 20;
-  const drawableWidth = w - marginLeft - marginRight;
-  
-  const xPix = marginLeft + clamp(wp.x, 0, 1) * drawableWidth;
-  const yPix = baseCenterY - wp.offset * lateralScale;
-
-  return { x: xPix, y: yPix };
-}
-
-function cubicBezierPoint(
-  p0: { x: number; y: number },
-  c1: { x: number; y: number },
-  c2: { x: number; y: number },
-  p3: { x: number; y: number },
-  t: number
-): { x: number; y: number } {
+function cubicBezierPoint(p0: Point, c1: Point, c2: Point, p3: Point, t: number): Point {
   const u = 1 - t;
-  const tt = t * t;
   const uu = u * u;
   const uuu = uu * u;
+  const tt = t * t;
   const ttt = tt * t;
 
   return {
@@ -212,234 +292,619 @@ function cubicBezierPoint(
   };
 }
 
-function setupUI(): void {
-  lanesInput.addEventListener("input", () => {
-    const n = parseInt(lanesInput.value, 10);
-    if (!isNaN(n)) {
-      lanesPerSide = clamp(n, 1, 6);
-      lanesInput.value = String(lanesPerSide);
-      vehicles.forEach((v) => {
-        v.lane = clamp(v.lane, 1, lanesPerSide);
+function computeTangentDirection(from: Point, to: Point): Point {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy) || 1;
+  return { x: dx / length, y: dy / length };
+}
+
+function computePathSamples(vehicle: Vehicle, canvasWidth: number, canvasHeight: number): Point[] {
+  const sortedWaypoints = [...vehicle.waypoints].sort((a, b) => a.x - b.x);
+  if (sortedWaypoints.length === 0) return [];
+
+  const points = sortedWaypoints.map((wp) => waypointToCanvas(vehicle, wp, canvasWidth, canvasHeight));
+
+  if (points.length === 1) {
+    return [{ x: points[0].x, y: points[0].y }];
+  }
+
+  if (vehicle.smoothness <= 0.01 || points.length === 2) {
+    return computeLinearSamples(points);
+  }
+
+  return computeBezierSamples(points, vehicle.smoothness);
+}
+
+function computeLinearSamples(points: Point[]): Point[] {
+  const samples: Point[] = [{ x: points[0].x, y: points[0].y }];
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const start = points[i];
+    const end = points[i + 1];
+
+    for (let step = 1; step <= LINEAR_STEPS_PER_SEGMENT; step++) {
+      const t = step / LINEAR_STEPS_PER_SEGMENT;
+      samples.push({
+        x: start.x + (end.x - start.x) * t,
+        y: start.y + (end.y - start.y) * t,
       });
-      syncUIFromState();
-      draw();
     }
+  }
+
+  return samples;
+}
+
+function computeBezierSamples(points: Point[], smoothness: number): Point[] {
+  const samples: Point[] = [{ x: points[0].x, y: points[0].y }];
+  const tangentFactor = 0.35 * smoothness;
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const segStart = points[i];
+    const segEnd = points[i + 1];
+    const segLength = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+
+    if (segLength < 1e-3) {
+      samples.push({ x: segEnd.x, y: segEnd.y });
+      continue;
+    }
+
+    const prevTangent = i === 0
+      ? computeTangentDirection(segStart, segEnd)
+      : computeTangentDirection(points[i - 1], segStart);
+
+    const nextTangent = i + 2 >= points.length
+      ? computeTangentDirection(segStart, segEnd)
+      : computeTangentDirection(segEnd, points[i + 2]);
+
+    const handleLength = segLength * tangentFactor;
+    const controlPoint1: Point = {
+      x: segStart.x + prevTangent.x * handleLength,
+      y: segStart.y + prevTangent.y * handleLength,
+    };
+    const controlPoint2: Point = {
+      x: segEnd.x - nextTangent.x * handleLength,
+      y: segEnd.y - nextTangent.y * handleLength,
+    };
+
+    for (let step = 1; step <= BEZIER_STEPS_PER_SEGMENT; step++) {
+      const t = step / BEZIER_STEPS_PER_SEGMENT;
+      samples.push(cubicBezierPoint(segStart, controlPoint1, controlPoint2, segEnd, t));
+    }
+  }
+
+  return samples;
+}
+
+// ============================================================
+//  Drawing: Sub-functions
+// ============================================================
+
+function drawBackground(canvasWidth: number, canvasHeight: number): void {
+  ctx.fillStyle = "#1f2933";
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+}
+
+function drawDistanceGrid(canvasWidth: number, canvasHeight: number): void {
+  const drawableWidth = getDrawableWidth(canvasWidth);
+  const stepM = distanceGridStep();
+  const stepCount = totalDistanceM / stepM;
+
+  ctx.lineWidth = 1;
+
+  for (let i = 0; i <= stepCount; i++) {
+    const ratio = i / stepCount;
+    const xPix = MARGIN_LEFT + ratio * drawableWidth;
+
+    ctx.save();
+    ctx.setLineDash([4, 8]);
+    ctx.strokeStyle = "#374151";
+    ctx.beginPath();
+    ctx.moveTo(xPix, 0);
+    ctx.lineTo(xPix, canvasHeight);
+    ctx.stroke();
+    ctx.restore();
+
+    const tickY = canvasHeight - 4;
+    ctx.strokeStyle = "#9ca3af";
+    ctx.beginPath();
+    ctx.moveTo(xPix, tickY);
+    ctx.lineTo(xPix, canvasHeight);
+    ctx.stroke();
+
+    ctx.fillStyle = "#9ca3af";
+    ctx.font = "10px 'Times New Roman', serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(`${i * stepM}m`, xPix, tickY - 2);
+  }
+
+  ctx.strokeStyle = "#9ca3af";
+  ctx.beginPath();
+  ctx.moveTo(MARGIN_LEFT, canvasHeight);
+  ctx.lineTo(MARGIN_LEFT + drawableWidth, canvasHeight);
+  ctx.stroke();
+}
+
+function drawLanes(canvasWidth: number, canvasHeight: number): void {
+  const drawableWidth = getDrawableWidth(canvasWidth);
+  const { top, bottom } = computeLaneLayout(canvasHeight);
+
+  ctx.strokeStyle = "#4b5563";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= lanesPerSide; i++) {
+    const y = top + i * LANE_HEIGHT;
+    ctx.beginPath();
+    ctx.moveTo(MARGIN_LEFT, y);
+    ctx.lineTo(MARGIN_LEFT + drawableWidth, y);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = "#9ca3af";
+  ctx.font = "12px 'Times New Roman', serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  for (let lane = 1; lane <= lanesPerSide; lane++) {
+    const centerY = bottom - (lane - 0.5) * LANE_HEIGHT;
+    ctx.fillText(`Lane ${lane}`, 8, centerY);
+  }
+}
+
+function drawTrajectoryPath(pathSamples: Point[], color: string): void {
+  if (pathSamples.length < 2) return;
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(pathSamples[0].x, pathSamples[0].y);
+  for (let i = 1; i < pathSamples.length; i++) {
+    ctx.lineTo(pathSamples[i].x, pathSamples[i].y);
+  }
+  ctx.stroke();
+}
+
+function drawWaypointMarkers(vehicle: Vehicle, canvasWidth: number, canvasHeight: number): void {
+  const sortedWaypoints = [...vehicle.waypoints].sort((a, b) => a.x - b.x);
+
+  sortedWaypoints.forEach((wp, index) => {
+    const pos = waypointToCanvas(vehicle, wp, canvasWidth, canvasHeight);
+
+    ctx.beginPath();
+    ctx.fillStyle = vehicle.color;
+    ctx.arc(pos.x, pos.y, WAYPOINT_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.strokeStyle = "#ffffffaa";
+    ctx.lineWidth = 1;
+    ctx.arc(pos.x, pos.y, WAYPOINT_OUTLINE_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = "#e5e7eb";
+    ctx.font = "10px 'Times New Roman', serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(index), pos.x, pos.y - 12);
   });
+}
 
-  distanceInput.addEventListener("input", () => {
-    const d = parseInt(distanceInput.value, 10);
-    if (!isNaN(d) && d > 0) {
-      totalDistanceM = clamp(d, 100, 5000);
-      distanceInput.value = String(totalDistanceM);
-      draw();
+function drawBrakePointMarkers(vehicle: Vehicle, pathSamples: Point[], canvasWidth: number, canvasHeight: number): void {
+  if (vehicle.id !== "ego" || vehicle.brakePoints.length === 0) return;
+
+  const drawableWidth = getDrawableWidth(canvasWidth);
+
+  vehicle.brakePoints.forEach((bp) => {
+    const xPix = MARGIN_LEFT + bp.x * drawableWidth;
+    let yPix = canvasHeight / 2;
+
+    if (pathSamples.length >= 2) {
+      yPix = interpolateYOnPath(pathSamples, xPix);
     }
+
+    ctx.beginPath();
+    ctx.fillStyle = "#ffaa00";
+    ctx.moveTo(xPix, yPix - BRAKE_TRIANGLE_HEIGHT);
+    ctx.lineTo(xPix - BRAKE_TRIANGLE_HALF_WIDTH, yPix - BRAKE_TRIANGLE_TOP_OFFSET);
+    ctx.lineTo(xPix + BRAKE_TRIANGLE_HALF_WIDTH, yPix - BRAKE_TRIANGLE_TOP_OFFSET);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "9px 'Times New Roman', serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(`${bp.decelerationMps2.toFixed(1)}m/s²`, xPix, yPix - BRAKE_TRIANGLE_TOP_OFFSET - 2);
   });
+}
 
-  const panels = document.querySelectorAll<HTMLDivElement>(".vehicle-panel");
-  panels.forEach((panel) => {
-    const vehicleId = panel.dataset["vehicleId"];
-    if (!vehicleId) return;
-    const vi = vehicles.findIndex((v) => v.id === vehicleId);
-    if (vi === -1) return;
-    const vehicle = vehicles[vi];
+function drawTimeDots(vehicle: Vehicle, pathSamples: Point[], canvasWidth: number): void {
+  const sortedWaypoints = [...vehicle.waypoints].sort((a, b) => a.x - b.x);
 
-    const enabledInput = panel.querySelector<HTMLInputElement>(
-      ".vehicle-enabled"
-    );
-    const laneInput = panel.querySelector<HTMLInputElement>(".vehicle-lane");
-    const colorInput = panel.querySelector<HTMLInputElement>(".vehicle-color");
-    const speedInput = panel.querySelector<HTMLInputElement>(".vehicle-speed");
-    const wpTextarea =
-      panel.querySelector<HTMLTextAreaElement>(".vehicle-waypoints");
-    const addWpButton =
-      panel.querySelector<HTMLButtonElement>(".vehicle-add-wp");
-    const smoothInput =
-      panel.querySelector<HTMLInputElement>(".vehicle-smooth");
-    const smoothValueSpan = panel.querySelector<HTMLSpanElement>(
-      ".vehicle-smooth-value"
-    );
-    
-    const bpTextarea =
-      panel.querySelector<HTMLTextAreaElement>(".vehicle-brakepoints");
-    const addBpButton =
-      panel.querySelector<HTMLButtonElement>(".vehicle-add-bp");
+  let points: Point[];
+  if (pathSamples.length >= 2) {
+    points = pathSamples;
+  } else if (sortedWaypoints.length > 0) {
+    points = sortedWaypoints.map((wp) => waypointToCanvas(vehicle, wp, canvasWidth, canvas.height));
+  } else {
+    points = [];
+  }
 
-    if (enabledInput) {
-      enabledInput.checked = vehicle.enabled;
-      enabledInput.addEventListener("change", () => {
-        vehicle.enabled = enabledInput.checked;
-        draw();
-      });
-    }
+  if (points.length < 2) return;
 
-    if (laneInput) {
-      laneInput.value = String(vehicle.lane);
-      laneInput.addEventListener("input", () => {
-        const n = parseInt(laneInput.value, 10);
-        if (!isNaN(n)) {
-          vehicle.lane = clamp(n, 1, lanesPerSide);
-          laneInput.value = String(vehicle.lane);
-          draw();
-        }
-      });
-    }
+  const startXPix = points[0].x;
+  const maxXPix = points[points.length - 1].x;
 
-    if (colorInput) {
-      colorInput.value = vehicle.color;
-      colorInput.addEventListener("input", () => {
-        vehicle.color = colorInput.value;
-        draw();
-      });
-    }
+  const initialSpeedMps = Math.max(0, kmhToMps(vehicle.speedKmh));
+  if (initialSpeedMps <= 0) return;
 
-    if (speedInput) {
-      speedInput.value = String(vehicle.speedKmh);
-      speedInput.addEventListener("input", () => {
-        const vnum = parseFloat(speedInput.value);
-        if (!isNaN(vnum) && vnum >= 0) {
-          vehicle.speedKmh = vnum;
-          draw();
-        }
-      });
-    }
+  const firstWpX = sortedWaypoints[0].x;
+  const lastWpX = sortedWaypoints[sortedWaypoints.length - 1].x;
+  const trajectoryDistanceM = (lastWpX - firstWpX) * totalDistanceM;
+  const drawableWidth = getDrawableWidth(canvasWidth);
+  const pixelsPerMeter = drawableWidth / totalDistanceM;
 
-    if (wpTextarea) {
-      wpTextarea.value = waypointsToText(vehicle.waypoints);
-      wpTextarea.addEventListener("input", () => {
-        vehicle.waypoints = parseWaypoints(wpTextarea.value).slice(0, 10);
-        draw();
-      });
-    }
+  const brakesInMeters = [...vehicle.brakePoints]
+    .map((bp) => ({ distM: (bp.x - firstWpX) * totalDistanceM, decel: bp.decelerationMps2 }))
+    .filter((b) => b.distM >= 0 && b.distM <= trajectoryDistanceM)
+    .sort((a, b) => a.distM - b.distM);
 
-    if (addWpButton) {
-      addWpButton.addEventListener("click", () => {
-        if (vehicle.waypoints.length >= 10) return;
-        let newX = 0.5;
-        if (vehicle.waypoints.length > 0) {
-          const last = vehicle.waypoints[vehicle.waypoints.length - 1];
-          newX = clamp(last.x + 0.1, 0, 1);
-        }
-        const newWp: Waypoint = {
-          x: newX,
-          offset: 0,
-        };
-        vehicle.waypoints.push(newWp);
-        syncUIFromState();
-        draw();
-      });
-    }
+  let currentSpeed = initialSpeedMps;
+  let traveledDistM = 0;
 
-    if (bpTextarea && vehicle.id === "ego") {
-      if (vehicle.brakePoints) {
-        bpTextarea.value = brakePointsToText(vehicle.brakePoints);
+  while (traveledDistM <= trajectoryDistanceM + 1e-6) {
+    const targetX = startXPix + traveledDistM * pixelsPerMeter;
+    if (targetX > maxXPix) break;
+
+    const yPix = interpolateYOnPath(points, targetX);
+
+    ctx.beginPath();
+    ctx.fillStyle = vehicle.color;
+    ctx.arc(targetX, yPix, TIME_DOT_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+
+    let activeDecel = 0;
+    for (const brake of brakesInMeters) {
+      if (traveledDistM >= brake.distM) {
+        activeDecel = brake.decel;
       }
-      bpTextarea.addEventListener("input", () => {
-        if (vehicle.brakePoints) {
-          vehicle.brakePoints = parseBrakePoints(bpTextarea.value).slice(0, 10);
-          draw();
-        }
-      });
     }
 
-    if (addBpButton && vehicle.id === "ego") {
-      addBpButton.addEventListener("click", () => {
-        if (!vehicle.brakePoints || vehicle.brakePoints.length >= 10) return;
-        let newX = 0.5;
-        if (vehicle.brakePoints.length > 0) {
-          const last = vehicle.brakePoints[vehicle.brakePoints.length - 1];
-          newX = clamp(last.x + 0.1, 0, 1);
-        }
-        const newBp: BrakePoint = {
-          x: newX,
-          decelerationMps2: 3.0, 
-        };
-        vehicle.brakePoints.push(newBp);
-        syncUIFromState();
-        draw();
-      });
+    if (activeDecel > 0) {
+      currentSpeed = Math.max(0, currentSpeed - activeDecel * TIME_STEP_SEC);
     }
+    if (currentSpeed <= 0) break;
 
-    if (smoothInput && smoothValueSpan) {
-      smoothInput.value = String(vehicle.smoothness);
-      smoothValueSpan.textContent = vehicle.smoothness.toFixed(1);
-      smoothInput.addEventListener("input", () => {
-        const v = parseFloat(smoothInput.value);
-        if (!isNaN(v)) {
-          vehicle.smoothness = clamp(v, 0, 1);
-          smoothValueSpan.textContent = vehicle.smoothness.toFixed(1);
-          draw();
-        }
-      });
-    }
+    traveledDistM += currentSpeed * TIME_STEP_SEC;
+  }
+}
+
+// ============================================================
+//  Drawing: Main
+// ============================================================
+
+function draw(): void {
+  const canvasWidth = canvas.width;
+  const canvasHeight = canvas.height;
+
+  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+  drawBackground(canvasWidth, canvasHeight);
+  drawDistanceGrid(canvasWidth, canvasHeight);
+  drawLanes(canvasWidth, canvasHeight);
+
+  for (const vehicle of vehicles) {
+    if (!vehicle.enabled || vehicle.waypoints.length === 0) continue;
+
+    const pathSamples = computePathSamples(vehicle, canvasWidth, canvasHeight);
+
+    drawTrajectoryPath(pathSamples, vehicle.color);
+    drawWaypointMarkers(vehicle, canvasWidth, canvasHeight);
+    drawBrakePointMarkers(vehicle, pathSamples, canvasWidth, canvasHeight);
+    drawTimeDots(vehicle, pathSamples, canvasWidth);
+  }
+}
+
+// ============================================================
+//  Advanced Settings Modal
+// ============================================================
+
+function saveModalSnapshot(): void {
+  modalSnapshot = {};
+  for (const id of MODAL_FIELD_IDS) {
+    const el = document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
+    if (el) modalSnapshot[id] = el.value;
+  }
+}
+
+function restoreModalSnapshot(): void {
+  for (const id of MODAL_FIELD_IDS) {
+    const el = document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
+    if (el && id in modalSnapshot) el.value = modalSnapshot[id];
+  }
+}
+
+function openModal(): void {
+  saveModalSnapshot();
+  modal.classList.add("show");
+}
+
+function closeModalWithSave(): void {
+  modal.classList.remove("show");
+}
+
+function closeModalWithCancel(): void {
+  restoreModalSnapshot();
+  modal.classList.remove("show");
+}
+
+function setupModal(): void {
+  modalOpenButton.onclick = openModal;
+  modalCancelButton.onclick = closeModalWithCancel;
+  modalOkButton.onclick = closeModalWithSave;
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) closeModalWithCancel();
   });
+}
 
-  resetButton.addEventListener("click", () => {
-    lanesPerSide = 2;
-    lanesInput.value = "2";
-    totalDistanceM = 500;
+// ============================================================
+//  Vehicle Panel Generation
+// ============================================================
 
-    vehicles[0].enabled = true;
-    vehicles[0].lane = 1;
-    vehicles[0].color = "#ff4444";
-    vehicles[0].smoothness = 0.7;
-    vehicles[0].speedKmh = 72;
-    vehicles[0].waypoints = [
-      { x: 0, offset: 0 },
-      { x: 1, offset: 0 },
-    ];
-    vehicles[0].brakePoints = [];
+function createVehiclePanelHTML(vehicle: Vehicle): string {
+  const displayName = VEHICLE_DISPLAY_NAMES[vehicle.id] ?? vehicle.id;
+  const checkedAttr = vehicle.enabled ? "checked" : "";
+  const isEgo = vehicle.id === "ego";
 
-    vehicles[1].enabled = true;
-    vehicles[1].lane = 2;
-    vehicles[1].color = "#337bff";
-    vehicles[1].smoothness = 0.7;
-    vehicles[1].speedKmh = 60;
-    vehicles[1].waypoints = [
-      { x: 0, offset: 0 },
-      { x: 0.5, offset: 0 },
-      { x: 1, offset: 0 },
-    ];
+  let brakeSection = "";
+  if (isEgo) {
+    brakeSection = `
+      <label>Brake Points (x, decel [m/s&sup2;]):</label>
+      <textarea class="vehicle-brakepoints"></textarea>
+      <button class="vehicle-add-bp">Add Brake Point</button>`;
+  }
 
-    vehicles[2].enabled = false;
-    vehicles[2].lane = 1;
-    vehicles[2].color = "#2ecc71";
-    vehicles[2].smoothness = 0.7;
-    vehicles[2].speedKmh = 72;
-    vehicles[2].waypoints = [];
+  return `
+    <div class="vehicle-panel" data-vehicle-id="${vehicle.id}">
+      <div class="vehicle-header">
+        <span class="vehicle-label">${displayName}</span>
+        <label><input type="checkbox" class="vehicle-enabled" ${checkedAttr} /> Show</label>
+      </div>
+      <div class="vehicle-body">
+        <label>Initial Lane:
+          <input type="number" class="vehicle-lane" min="1" max="6" value="${vehicle.lane}" />
+        </label>
+        <label>
+          Color:
+          <input type="color" class="vehicle-color" value="${vehicle.color}" />
+          Speed (km/h):
+          <input type="number" class="vehicle-speed" step="1" value="${vehicle.speedKmh}" />
+        </label>
+        <label>Curve Smoothness:
+          <input type="range" class="vehicle-smooth" min="0" max="1" step="0.1" value="${vehicle.smoothness}" />
+          <span class="vehicle-smooth-value">${vehicle.smoothness.toFixed(1)}</span>
+        </label>
+        <label>Waypoints:</label>
+        <textarea class="vehicle-waypoints"></textarea>
+        <button class="vehicle-add-wp">Add Waypoint</button>
+        ${brakeSection}
+      </div>
+    </div>`;
+}
 
-    vehicles[3].enabled = false;
-    vehicles[3].lane = 1;
-    vehicles[3].color = "#f39c12";
-    vehicles[3].smoothness = 0.7;
-    vehicles[3].speedKmh = 72;
-    vehicles[3].waypoints = [];
+function generateVehiclePanels(): void {
+  const container = document.getElementById("vehiclePanelsContainer");
+  if (!container) return;
+
+  container.innerHTML = vehicles.map(createVehiclePanelHTML).join("");
+}
+
+// ============================================================
+//  Vehicle Panel DOM Helpers
+// ============================================================
+
+function findPanelElements(panel: HTMLDivElement): VehiclePanelElements {
+  return {
+    enabled: panel.querySelector<HTMLInputElement>(".vehicle-enabled"),
+    lane: panel.querySelector<HTMLInputElement>(".vehicle-lane"),
+    color: panel.querySelector<HTMLInputElement>(".vehicle-color"),
+    speed: panel.querySelector<HTMLInputElement>(".vehicle-speed"),
+    waypoints: panel.querySelector<HTMLTextAreaElement>(".vehicle-waypoints"),
+    addWaypoint: panel.querySelector<HTMLButtonElement>(".vehicle-add-wp"),
+    brakePoints: panel.querySelector<HTMLTextAreaElement>(".vehicle-brakepoints"),
+    addBrakePoint: panel.querySelector<HTMLButtonElement>(".vehicle-add-bp"),
+    smooth: panel.querySelector<HTMLInputElement>(".vehicle-smooth"),
+    smoothValue: panel.querySelector<HTMLSpanElement>(".vehicle-smooth-value"),
+  };
+}
+
+function syncPanelFromVehicle(panel: HTMLDivElement, vehicle: Vehicle): void {
+  const el = findPanelElements(panel);
+
+  if (el.enabled) el.enabled.checked = vehicle.enabled;
+  if (el.lane) el.lane.value = String(vehicle.lane);
+  if (el.color) el.color.value = vehicle.color;
+  if (el.speed) el.speed.value = String(vehicle.speedKmh);
+  if (el.waypoints) el.waypoints.value = waypointsToText(vehicle.waypoints);
+  if (el.brakePoints) el.brakePoints.value = brakePointsToText(vehicle.brakePoints);
+  if (el.smooth && el.smoothValue) {
+    el.smooth.value = String(vehicle.smoothness);
+    el.smoothValue.textContent = vehicle.smoothness.toFixed(1);
+  }
+}
+
+// ============================================================
+//  UI Setup
+// ============================================================
+
+function setupLanesInput(): void {
+  lanesInput.addEventListener("input", () => {
+    const parsed = parseInt(lanesInput.value, 10);
+    if (isNaN(parsed)) return;
+
+    lanesPerSide = clamp(parsed, 1, 6);
+    lanesInput.value = String(lanesPerSide);
+
+    for (const vehicle of vehicles) {
+      vehicle.lane = clamp(vehicle.lane, 1, lanesPerSide);
+    }
 
     syncUIFromState();
     draw();
   });
+}
 
-  function resizeCanvas(): void {
-    const container = document.getElementById("canvasContainer");
-    if (!container) return;
-    
-    const rect = container.getBoundingClientRect();
-    const padding = 40;
-    
-    const availableWidth = rect.width - padding;
-    const availableHeight = rect.height - padding;
-    
-    canvas.width = Math.max(400, availableWidth);
-    canvas.height = Math.max(200, availableHeight);
-    
+function setupDistanceInput(): void {
+  distanceInput.addEventListener("input", () => {
+    const parsed = parseInt(distanceInput.value, 10);
+    if (isNaN(parsed) || parsed <= 0) return;
+
+    totalDistanceM = clamp(parsed, 100, 5000);
+    distanceInput.value = String(totalDistanceM);
     draw();
+  });
+}
+
+function setupVehiclePanel(panel: HTMLDivElement, vehicle: Vehicle): void {
+  const el = findPanelElements(panel);
+
+  if (el.enabled) {
+    el.enabled.checked = vehicle.enabled;
+    el.enabled.addEventListener("change", () => {
+      vehicle.enabled = el.enabled!.checked;
+      draw();
+    });
   }
 
-  resizeCanvas();
-  window.addEventListener("resize", resizeCanvas);
+  if (el.lane) {
+    el.lane.value = String(vehicle.lane);
+    el.lane.addEventListener("input", () => {
+      const parsed = parseInt(el.lane!.value, 10);
+      if (isNaN(parsed)) return;
+      vehicle.lane = clamp(parsed, 1, lanesPerSide);
+      el.lane!.value = String(vehicle.lane);
+      draw();
+    });
+  }
 
-  canvas.addEventListener("mousedown", onCanvasMouseDown);
-  window.addEventListener("mousemove", onCanvasMouseMove);
-  window.addEventListener("mouseup", onCanvasMouseUp);
+  if (el.color) {
+    el.color.value = vehicle.color;
+    el.color.addEventListener("input", () => {
+      vehicle.color = el.color!.value;
+      draw();
+    });
+  }
+
+  if (el.speed) {
+    el.speed.value = String(vehicle.speedKmh);
+    el.speed.addEventListener("input", () => {
+      const parsed = parseFloat(el.speed!.value);
+      if (isNaN(parsed) || parsed < 0) return;
+      vehicle.speedKmh = parsed;
+      draw();
+    });
+  }
+
+  if (el.waypoints) {
+    el.waypoints.value = waypointsToText(vehicle.waypoints);
+    el.waypoints.addEventListener("input", () => {
+      vehicle.waypoints = parseWaypoints(el.waypoints!.value).slice(0, MAX_WAYPOINTS);
+      draw();
+    });
+  }
+
+  if (el.addWaypoint) {
+    el.addWaypoint.addEventListener("click", () => {
+      if (vehicle.waypoints.length >= MAX_WAYPOINTS) return;
+
+      let newX = 0.5;
+      if (vehicle.waypoints.length > 0) {
+        newX = clamp(vehicle.waypoints[vehicle.waypoints.length - 1].x + 0.1, 0, 1);
+      }
+
+      vehicle.waypoints.push({ x: newX, offset: 0 });
+      syncUIFromState();
+      draw();
+    });
+  }
+
+  if (el.brakePoints && vehicle.id === "ego") {
+    el.brakePoints.value = brakePointsToText(vehicle.brakePoints);
+    el.brakePoints.addEventListener("input", () => {
+      vehicle.brakePoints = parseBrakePoints(el.brakePoints!.value).slice(0, MAX_BRAKE_POINTS);
+      draw();
+    });
+  }
+
+  if (el.addBrakePoint && vehicle.id === "ego") {
+    el.addBrakePoint.addEventListener("click", () => {
+      if (vehicle.brakePoints.length >= MAX_BRAKE_POINTS) return;
+
+      let newX = 0.5;
+      if (vehicle.brakePoints.length > 0) {
+        newX = clamp(vehicle.brakePoints[vehicle.brakePoints.length - 1].x + 0.1, 0, 1);
+      }
+
+      vehicle.brakePoints.push({ x: newX, decelerationMps2: DEFAULT_DECELERATION });
+      syncUIFromState();
+      draw();
+    });
+  }
+
+  if (el.smooth && el.smoothValue) {
+    el.smooth.value = String(vehicle.smoothness);
+    el.smoothValue.textContent = vehicle.smoothness.toFixed(1);
+    el.smooth.addEventListener("input", () => {
+      const parsed = parseFloat(el.smooth!.value);
+      if (isNaN(parsed)) return;
+      vehicle.smoothness = clamp(parsed, 0, 1);
+      el.smoothValue!.textContent = vehicle.smoothness.toFixed(1);
+      draw();
+    });
+  }
+}
+
+function setupVehiclePanels(): void {
+  const panels = document.querySelectorAll<HTMLDivElement>(".vehicle-panel");
+
+  panels.forEach((panel) => {
+    const vehicleId = panel.dataset["vehicleId"];
+    if (!vehicleId) return;
+
+    const vehicle = vehicles.find((v) => v.id === vehicleId);
+    if (!vehicle) return;
+
+    setupVehiclePanel(panel, vehicle);
+  });
+}
+
+function setupResetButton(): void {
+  resetButton.addEventListener("click", () => {
+    lanesPerSide = 2;
+    totalDistanceM = 500;
+
+    const defaults = createInitialVehicles();
+    for (let i = 0; i < vehicles.length; i++) {
+      Object.assign(vehicles[i], defaults[i]);
+    }
+
+    syncUIFromState();
+    draw();
+  });
+}
+
+function resizeCanvas(): void {
+  const container = document.getElementById("canvasContainer");
+  if (!container) return;
+
+  const rect = container.getBoundingClientRect();
+  canvas.width = Math.max(CANVAS_MIN_WIDTH, rect.width - CANVAS_PADDING);
+  canvas.height = Math.max(CANVAS_MIN_HEIGHT, rect.height - CANVAS_PADDING);
+
+  draw();
 }
 
 function syncUIFromState(): void {
@@ -450,698 +915,356 @@ function syncUIFromState(): void {
   panels.forEach((panel) => {
     const vehicleId = panel.dataset["vehicleId"];
     if (!vehicleId) return;
+
     const vehicle = vehicles.find((v) => v.id === vehicleId);
     if (!vehicle) return;
 
-    const enabledInput = panel.querySelector<HTMLInputElement>(
-      ".vehicle-enabled"
-    );
-    const laneInput = panel.querySelector<HTMLInputElement>(".vehicle-lane");
-    const colorInput = panel.querySelector<HTMLInputElement>(".vehicle-color");
-    const speedInput = panel.querySelector<HTMLInputElement>(".vehicle-speed");
-    const wpTextarea =
-      panel.querySelector<HTMLTextAreaElement>(".vehicle-waypoints");
-    const bpTextarea =
-      panel.querySelector<HTMLTextAreaElement>(".vehicle-brakepoints");
-    const smoothInput =
-      panel.querySelector<HTMLInputElement>(".vehicle-smooth");
-    const smoothValueSpan = panel.querySelector<HTMLSpanElement>(
-      ".vehicle-smooth-value"
-    );
-
-    if (enabledInput) enabledInput.checked = vehicle.enabled;
-    if (laneInput) laneInput.value = String(vehicle.lane);
-    if (colorInput) colorInput.value = vehicle.color;
-    if (speedInput) speedInput.value = String(vehicle.speedKmh);
-    if (wpTextarea) wpTextarea.value = waypointsToText(vehicle.waypoints);
-    if (bpTextarea && vehicle.brakePoints) {
-      bpTextarea.value = brakePointsToText(vehicle.brakePoints);
-    }
-    if (smoothInput && smoothValueSpan) {
-      smoothInput.value = String(vehicle.smoothness);
-      smoothValueSpan.textContent = vehicle.smoothness.toFixed(1);
-    }
+    syncPanelFromVehicle(panel, vehicle);
   });
 }
 
-function draw(): void {
-  const w = canvas.width;
-  const h = canvas.height;
+function setupUI(): void {
+  generateVehiclePanels();
+  setupLanesInput();
+  setupDistanceInput();
+  setupVehiclePanels();
+  setupResetButton();
 
-  ctx.clearRect(0, 0, w, h);
+  resizeCanvas();
+  window.addEventListener("resize", resizeCanvas);
 
-  ctx.fillStyle = "#1f2933";
-  ctx.fillRect(0, 0, w, h);
-
-  const marginLeft = 60;
-  const marginRight = 20;
-  const drawableWidth = w - marginLeft - marginRight;
-  
-  let stepM: number;
-  if (totalDistanceM <= 500) {
-    stepM = 50;
-  } else if (totalDistanceM <= 1000) {
-    stepM = 100;
-  } else if (totalDistanceM <= 2000) {
-    stepM = 200;
-  } else {
-    stepM = 500;
-  }
-  
-  const nSteps = totalDistanceM / stepM;
-
-  ctx.lineWidth = 1;
-
-  for (let i = 0; i <= nSteps; i++) {
-    const t = i / nSteps;
-    const xPix = marginLeft + t * drawableWidth;
-
-    ctx.save();
-    ctx.setLineDash([4, 8]);
-    ctx.strokeStyle = "#374151";
-    ctx.beginPath();
-    ctx.moveTo(xPix, 0);
-    ctx.lineTo(xPix, h);
-    ctx.stroke();
-    ctx.restore();
-
-    const yAxis = h - 4;
-
-    ctx.strokeStyle = "#9ca3af";
-    ctx.beginPath();
-    ctx.moveTo(xPix, yAxis);
-    ctx.lineTo(xPix, h);
-    ctx.stroke();
-
-    ctx.fillStyle = "#9ca3af";
-    ctx.font = "10px 'Times New Roman', serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
-
-    const distLabel = `${i * stepM}m`;
-    ctx.fillText(distLabel, xPix, yAxis - 2);
-  }
-
-  ctx.strokeStyle = "#9ca3af";
-  ctx.beginPath();
-  ctx.moveTo(marginLeft, h);
-  ctx.lineTo(marginLeft + drawableWidth, h);
-  ctx.stroke();
-
-  const laneHeight = 80;                       
-  const totalLaneHeight = laneHeight * lanesPerSide;
-  const laneAreaTop = (h - totalLaneHeight) / 2;
-  const laneAreaBottom = laneAreaTop + totalLaneHeight;
-
-  ctx.strokeStyle = "#4b5563";
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= lanesPerSide; i++) {
-    const y = laneAreaTop + i * laneHeight;
-    ctx.beginPath();
-    ctx.moveTo(marginLeft, y);
-    ctx.lineTo(marginLeft + drawableWidth, y);
-    ctx.stroke();
-  }
-
-  ctx.fillStyle = "#9ca3af";
-  ctx.font = "12px 'Times New Roman', serif";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  for (let lane = 1; lane <= lanesPerSide; lane++) {
-    const centerY = laneAreaBottom - (lane - 0.5) * laneHeight;
-    ctx.fillText(`Lane ${lane}`, 8, centerY);
-  }
-
-  const pixelsPerMeterX = drawableWidth / totalDistanceM;
-
-  vehicles.forEach((v) => {
-    if (!v.enabled) return;
-
-    const wpsSorted = [...v.waypoints].sort((a, b) => a.x - b.x);
-    if (wpsSorted.length === 0) return;
-
-    const pts = wpsSorted.map((wp) => waypointToCanvas(v, wp, w, h));
-
-    ctx.strokeStyle = v.color;
-    ctx.lineWidth = 2;
-
-    const pathSamples: { x: number; y: number }[] = [];
-
-    if (pts.length === 1) {
-      pathSamples.push({ x: pts[0].x, y: pts[0].y });
-    } else if (v.smoothness <= 0.01 || pts.length === 2) {
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      pathSamples.push({ x: pts[0].x, y: pts[0].y });
-
-      const stepsPerSegment = 20;
-      for (let i = 0; i < pts.length - 1; i++) {
-        const p1 = pts[i];
-        const p2 = pts[i + 1];
-
-        for (let s = 1; s <= stepsPerSegment; s++) {
-          const t = s / stepsPerSegment;
-          const x = p1.x + (p2.x - p1.x) * t;
-          const y = p1.y + (p2.y - p1.y) * t;
-
-          ctx.lineTo(x, y);
-          pathSamples.push({ x, y });
-        }
-      }
-      ctx.stroke();
-    } else {
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      pathSamples.push({ x: pts[0].x, y: pts[0].y });
-
-      const factor = 0.35 * v.smoothness;
-      const stepsPerSegment = 24;
-      const n = pts.length;
-
-      for (let i = 0; i < n - 1; i++) {
-        const p1 = pts[i];
-        const p2 = pts[i + 1];
-        const segVx = p2.x - p1.x;
-        const segVy = p2.y - p1.y;
-        const segLen = Math.hypot(segVx, segVy);
-        if (segLen < 1e-3) {
-          ctx.lineTo(p2.x, p2.y);
-          pathSamples.push({ x: p2.x, y: p2.y });
-          continue;
-        }
-
-        let prevDirX: number;
-        let prevDirY: number;
-        if (i === 0) {
-          prevDirX = segVx / segLen;
-          prevDirY = segVy / segLen;
-        } else {
-          const p0 = pts[i - 1];
-          const vx = p1.x - p0.x;
-          const vy = p1.y - p0.y;
-          const l = Math.hypot(vx, vy) || 1;
-          prevDirX = vx / l;
-          prevDirY = vy / l;
-        }
-
-        let nextDirX: number;
-        let nextDirY: number;
-        if (i + 2 >= n) {
-          nextDirX = segVx / segLen;
-          nextDirY = segVy / segLen;
-        } else {
-          const p3 = pts[i + 2];
-          const vx = p3.x - p2.x;
-          const vy = p3.y - p2.y;
-          const l = Math.hypot(vx, vy) || 1;
-          nextDirX = vx / l;
-          nextDirY = vy / l;
-        }
-
-        const d1 = segLen * factor;
-        const d2 = segLen * factor;
-
-        const c1 = { x: p1.x + prevDirX * d1, y: p1.y + prevDirY * d1 };
-        const c2 = { x: p2.x - nextDirX * d2, y: p2.y - nextDirY * d2 };
-
-        for (let s = 1; s <= stepsPerSegment; s++) {
-          const t = s / stepsPerSegment;
-          const q = cubicBezierPoint(p1, c1, c2, p2, t);
-          ctx.lineTo(q.x, q.y);
-          pathSamples.push(q);
-        }
-      }
-      ctx.stroke();
-    }
-
-    wpsSorted.forEach((wp, idx) => {
-      const pos = waypointToCanvas(v, wp, w, h);
-
-      ctx.beginPath();
-      ctx.fillStyle = v.color;
-      ctx.arc(pos.x, pos.y, 6, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.strokeStyle = "#ffffffaa";
-      ctx.lineWidth = 1;
-      ctx.arc(pos.x, pos.y, 8, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.fillStyle = "#e5e7eb";
-      ctx.font = "10px 'Times New Roman', serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(String(idx), pos.x, pos.y - 12);
-    });
-
-    if (v.id === "ego" && v.brakePoints) {
-      v.brakePoints.forEach((bp, idx) => {
-        const marginLeft = 60;
-        const marginRight = 20;
-        const drawableWidth = w - marginLeft - marginRight;
-        const xPix = marginLeft + bp.x * drawableWidth;
-        
-        let yPix = h / 2;
-        
-        if (pathSamples.length >= 2) {
-          let j = 0;
-          while (j < pathSamples.length - 1 && pathSamples[j + 1].x < xPix) {
-            j++;
-          }
-          const pA = pathSamples[j];
-          const pB = pathSamples[Math.min(j + 1, pathSamples.length - 1)];
-          const dx = pB.x - pA.x || 1;
-          const alpha = clamp((xPix - pA.x) / dx, 0, 1);
-          yPix = pA.y + (pB.y - pA.y) * alpha;
-        }
-        
-        ctx.beginPath();
-        ctx.fillStyle = "#ffaa00";
-        ctx.moveTo(xPix, yPix - 10);
-        ctx.lineTo(xPix - 6, yPix - 20);
-        ctx.lineTo(xPix + 6, yPix - 20);
-        ctx.closePath();
-        ctx.fill();
-        
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "9px 'Times New Roman', serif";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "bottom";
-        ctx.fillText(`${bp.decelerationMps2.toFixed(1)}m/s²`, xPix, yPix - 22);
-      });
-    }
-
-    const samplesForTime =
-      pathSamples.length >= 2 ? pathSamples : pts.map((p) => ({ ...p }));
-    if (samplesForTime.length < 2) return;
-
-    const startXPix = samplesForTime[0].x;
-    const maxXPix = samplesForTime[samplesForTime.length - 1].x;
-
-    const speedMps = Math.max(0, v.speedKmh / 3.6);
-    if (speedMps <= 0) return;
-
-    const startXNormalized = (samplesForTime[0].x - 60) / (w - 80);
-    const maxXNormalized = (samplesForTime[samplesForTime.length - 1].x - 60) / (w - 80);
-    const trajectoryDistanceM = (maxXNormalized - startXNormalized) * totalDistanceM;
-    
-    const durationSec = trajectoryDistanceM / speedMps;
-    const dt = 0.5;
-
-    for (let tSec = 0; tSec <= durationSec + 1e-6; tSec += dt) {
-      const distM = speedMps * tSec;
-      const targetX = startXPix + distM * pixelsPerMeterX;
-
-      if (targetX > maxXPix) break;
-
-      let j = 0;
-      while (
-        j < samplesForTime.length - 1 &&
-        samplesForTime[j + 1].x < targetX
-      ) {
-        j++;
-      }
-      const pA = samplesForTime[j];
-      const pB = samplesForTime[Math.min(j + 1, samplesForTime.length - 1)];
-      const dx = pB.x - pA.x || 1;
-      const alpha = clamp((targetX - pA.x) / dx, 0, 1);
-      const yPix = pA.y + (pB.y - pA.y) * alpha;
-
-      ctx.beginPath();
-      ctx.fillStyle = v.color;
-      ctx.arc(targetX, yPix, 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  });
+  canvas.addEventListener("mousedown", onCanvasMouseDown);
+  window.addEventListener("mousemove", onCanvasMouseMove);
+  window.addEventListener("mouseup", onCanvasMouseUp);
 }
 
-function getCanvasCoords(evt: MouseEvent): { x: number; y: number } | null {
+// ============================================================
+//  Mouse Interaction (Drag & Drop)
+// ============================================================
+
+function getCanvasCoords(event: MouseEvent): Point | null {
   const rect = canvas.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return null;
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  const x = (evt.clientX - rect.left) * scaleX;
-  const y = (evt.clientY - rect.top) * scaleY;
-  return { x, y };
+
+  return {
+    x: (event.clientX - rect.left) * (canvas.width / rect.width),
+    y: (event.clientY - rect.top) * (canvas.height / rect.height),
+  };
 }
 
-function onCanvasMouseDown(evt: MouseEvent): void {
-  const pos = getCanvasCoords(evt);
-  if (!pos) return;
+function pixelXToNormalized(pixelX: number, canvasWidth: number): number {
+  return clamp((pixelX - MARGIN_LEFT) / getDrawableWidth(canvasWidth), 0, 1);
+}
 
-  const w = canvas.width;
-  const h = canvas.height;
-  const hitRadius = 10;
-
+function findBrakePointAtPosition(pos: Point, canvasWidth: number, canvasHeight: number): DragState | null {
   for (let vi = 0; vi < vehicles.length; vi++) {
-    const v = vehicles[vi];
-    if (!v.enabled || v.id !== "ego" || !v.brakePoints) continue;
+    const vehicle = vehicles[vi];
+    if (!vehicle.enabled || vehicle.id !== "ego" || vehicle.brakePoints.length === 0) continue;
 
-    for (let bi = 0; bi < v.brakePoints.length; bi++) {
-      const bp = v.brakePoints[bi];
-      const marginLeft = 60;
-      const marginRight = 20;
-      const drawableWidth = w - marginLeft - marginRight;
-      const xPix = marginLeft + bp.x * drawableWidth;
-      
-      const wpsSorted = [...v.waypoints].sort((a, b) => a.x - b.x);
-      const pts = wpsSorted.map((wp) => waypointToCanvas(v, wp, w, h));
-      const pathSamples: { x: number; y: number }[] = [];
-      
-      pts.forEach(p => pathSamples.push(p));
-      
-      let yPix = h / 2;
+    const pathSamples = computePathSamples(vehicle, canvasWidth, canvasHeight);
+    const drawableWidth = getDrawableWidth(canvasWidth);
+
+    for (let bi = 0; bi < vehicle.brakePoints.length; bi++) {
+      const xPix = MARGIN_LEFT + vehicle.brakePoints[bi].x * drawableWidth;
+
+      let yPix = canvasHeight / 2;
       if (pathSamples.length >= 2) {
-        let j = 0;
-        while (j < pathSamples.length - 1 && pathSamples[j + 1].x < xPix) {
-          j++;
-        }
-        const pA = pathSamples[j];
-        const pB = pathSamples[Math.min(j + 1, pathSamples.length - 1)];
-        const dx = pB.x - pA.x || 1;
-        const alpha = clamp((xPix - pA.x) / dx, 0, 1);
-        yPix = pA.y + (pB.y - pA.y) * alpha;
+        yPix = interpolateYOnPath(pathSamples, xPix);
       }
-      
+
+      const markerCenterY = yPix - (BRAKE_TRIANGLE_HEIGHT + BRAKE_TRIANGLE_TOP_OFFSET) / 2;
       const dx = xPix - pos.x;
-      const dy = yPix - 15 - pos.y;
-      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
-        dragState = { 
-          vehicleIndex: vi, 
-          waypointIndex: 0, 
-          isBrakePoint: true,
-          brakePointIndex: bi
-        };
-        return;
+      const dy = markerCenterY - pos.y;
+      if (dx * dx + dy * dy <= HIT_RADIUS * HIT_RADIUS) {
+        return { vehicleIndex: vi, waypointIndex: 0, isBrakePoint: true, brakePointIndex: bi };
       }
     }
   }
 
-  for (let vi = 0; vi < vehicles.length; vi++) {
-    const v = vehicles[vi];
-    if (!v.enabled) continue;
-
-    for (let wi = 0; wi < v.waypoints.length; wi++) {
-      const wp = v.waypoints[wi];
-      const p = waypointToCanvas(v, wp, w, h);
-      const dx = p.x - pos.x;
-      const dy = p.y - pos.y;
-      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
-        dragState = { vehicleIndex: vi, waypointIndex: wi };
-        return;
-      }
-    }
-  }
-  dragState = null;
+  return null;
 }
 
-function onCanvasMouseMove(evt: MouseEvent): void {
-  if (!dragState) return;
-  const pos = getCanvasCoords(evt);
+function findWaypointAtPosition(pos: Point, canvasWidth: number, canvasHeight: number): DragState | null {
+  for (let vi = 0; vi < vehicles.length; vi++) {
+    const vehicle = vehicles[vi];
+    if (!vehicle.enabled) continue;
+
+    for (let wi = 0; wi < vehicle.waypoints.length; wi++) {
+      const point = waypointToCanvas(vehicle, vehicle.waypoints[wi], canvasWidth, canvasHeight);
+      const dx = point.x - pos.x;
+      const dy = point.y - pos.y;
+
+      if (dx * dx + dy * dy <= HIT_RADIUS * HIT_RADIUS) {
+        return { vehicleIndex: vi, waypointIndex: wi };
+      }
+    }
+  }
+
+  return null;
+}
+
+function onCanvasMouseDown(event: MouseEvent): void {
+  const pos = getCanvasCoords(event);
   if (!pos) return;
 
-  const v = vehicles[dragState.vehicleIndex];
-  
-  if (dragState.isBrakePoint && dragState.brakePointIndex !== undefined && v.brakePoints) {
-    const bp = v.brakePoints[dragState.brakePointIndex];
-    const w = canvas.width;
-    const marginLeft = 60;
-    const marginRight = 20;
-    const drawableWidth = w - marginLeft - marginRight;
-    const newX = clamp((pos.x - marginLeft) / drawableWidth, 0, 1);
-    bp.x = Math.round(newX * 100) / 100;
+  const canvasWidth = canvas.width;
+  const canvasHeight = canvas.height;
+
+  dragState =
+    findBrakePointAtPosition(pos, canvasWidth, canvasHeight) ??
+    findWaypointAtPosition(pos, canvasWidth, canvasHeight) ??
+    null;
+}
+
+function applyDrag(pos: Point): void {
+  if (!dragState) return;
+
+  const vehicle = vehicles[dragState.vehicleIndex];
+  const canvasWidth = canvas.width;
+
+  if (dragState.isBrakePoint && dragState.brakePointIndex !== undefined) {
+    const bp = vehicle.brakePoints[dragState.brakePointIndex];
+    bp.x = roundTo2(pixelXToNormalized(pos.x, canvasWidth));
     syncUIFromState();
     draw();
     return;
   }
-  
-  const wp = v.waypoints[dragState.waypointIndex];
 
-  const w = canvas.width;
-  const h = canvas.height;
-  const marginLeft = 60;
-  const marginRight = 20;
-  const drawableWidth = w - marginLeft - marginRight;
-  const laneHeight = 80;
-  const totalLaneHeight = laneHeight * lanesPerSide;
-  const laneAreaTop = (h - totalLaneHeight) / 2;
-  const laneAreaBottom = laneAreaTop + totalLaneHeight;
-  const baseCenterY = laneAreaBottom - (v.lane - 0.5) * laneHeight;
-  const lateralScale = laneHeight * 0.5;
+  const canvasHeight = canvas.height;
+  const wp = vehicle.waypoints[dragState.waypointIndex];
+  const baseY = laneCenterY(canvasHeight, vehicle.lane);
+  const lateralScale = LANE_HEIGHT * 0.5;
 
-  const newX = clamp((pos.x - marginLeft) / drawableWidth, 0, 1);
-  const newOffset = clamp(
-    (baseCenterY - pos.y) / lateralScale,
-    -offsetLimit(),
-    offsetLimit()
-  );
-
-  wp.x = Math.round(newX * 100) / 100;
-  wp.offset = Math.round(newOffset * 100) / 100;
+  wp.x = roundTo2(pixelXToNormalized(pos.x, canvasWidth));
+  wp.offset = roundTo2(clamp((baseY - pos.y) / lateralScale, -offsetLimit(), offsetLimit()));
 
   syncUIFromState();
   draw();
 }
 
-function onCanvasMouseUp(_evt: MouseEvent): void {
+function onCanvasMouseMove(event: MouseEvent): void {
+  if (!dragState) return;
+
+  const pos = getCanvasCoords(event);
+  if (!pos) return;
+
+  if (dragRafPending) return;
+  dragRafPending = true;
+
+  requestAnimationFrame(() => {
+    dragRafPending = false;
+    applyDrag(pos);
+  });
+}
+
+function onCanvasMouseUp(): void {
   dragState = null;
+}
+
+// ============================================================
+//  PDF Export
+// ============================================================
+
+function getModalFieldValue(id: string): string {
+  const el = document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
+  return (el && el.value) ? el.value : "-";
 }
 
 function setupPdfExport(): void {
   const button = document.getElementById("exportPdfButton");
   if (!button) return;
 
-  const getFieldValue = (ids: string[]): string => {
-    for (const id of ids) {
-      const el = document.getElementById(id) as
-        | HTMLInputElement
-        | HTMLSelectElement
-        | null;
-      if (el && typeof el.value === "string" && el.value !== "") {
-        return el.value;
-      }
-    }
-    return "-";
-  };
-
   button.addEventListener("click", () => {
-    const jspdfModule = (window as any).jspdf;
+    const jspdfModule = window.jspdf;
     if (!jspdfModule) {
       alert("jsPDF failed to load.");
       return;
     }
-    const { jsPDF } = jspdfModule;
 
-    const pdf = new jsPDF({
-      orientation: "landscape",
-      unit: "mm",
-      format: "a4",
-    });
-
+    const pdf = new jspdfModule.jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     const margin = 10;
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const columnWidth = pageW / 2 - margin * 2;
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const columnWidth = pageWidth / 2 - margin * 2;
 
     let imgBottomY = margin;
+    let cursorX = margin;
+    let cursorY = margin;
 
-    const canvas = document.getElementById(
-      "scenarioCanvas"
-    ) as HTMLCanvasElement | null;
-
-    if (canvas) {
-      const dataURL = canvas.toDataURL("image/png");
-
-      const maxW = pageW - margin * 2;
-      const maxH = pageH * 0.45;
-
-      const props = pdf.getImageProperties(dataURL);
-      const ratio = Math.min(maxW / props.width, maxH / props.height);
-
-      const w = props.width * ratio;
-      const h = props.height * ratio;
-
-      const imgX = (pageW - w) / 2;
-      const imgY = margin;
-
-      pdf.addImage(dataURL, "PNG", imgX, imgY, w, h);
-
-      imgBottomY = imgY + h; 
+    function advanceY(amount: number): void {
+      cursorY += amount;
     }
-    let x = margin;
-    let y = imgBottomY + 8;
+
+    function ensureSpace(needed: number): void {
+      if (cursorY + needed <= pageHeight - margin) return;
+
+      if (cursorX === margin) {
+        cursorX = pageWidth / 2;
+        cursorY = imgBottomY + 8;
+      } else {
+        pdf.addPage();
+        cursorX = margin;
+        cursorY = margin;
+        imgBottomY = margin;
+      }
+    }
+
+    function printText(text: string, fontSize: number): void {
+      ensureSpace(fontSize * 0.4);
+      pdf.setFontSize(fontSize);
+      pdf.text(text, cursorX, cursorY);
+    }
+
+    imgBottomY = addCanvasImage(pdf, pageWidth, pageHeight, margin);
+    cursorY = imgBottomY + 8;
 
     pdf.setFont("Times", "Normal");
-    const textBottomLimit = pageH - margin;
-    const secondColumnX = pageW / 2;
 
-    const moveToNextColumnIfNeeded = () => {
-      if (y > textBottomLimit && x === margin) {
-        x = secondColumnX;
-        y = imgBottomY + 8;
-      }
-    };
-
-    pdf.setFontSize(15);
-    pdf.text("Scenario Settings", x, y);
-    y += 7;
-
-    pdf.setFontSize(11);
-    pdf.text(`Number of lanes: ${lanesPerSide}`, x, y);
-    y += 5;
-    pdf.text(`Total Distance: ${totalDistanceM} m`, x, y);
-    y += 7;
-
-    const nameOf = (id: string): string => {
-      switch (id) {
-        case "ego": return "Ego Vehicle";
-        case "npc1": return "NPC 1";
-        case "npc2": return "NPC 2";
-        case "npc3": return "NPC 3";
-        default:    return id;
-      }
-    };
-
-    vehicles.forEach((v) => {
-      if (!v.enabled) return;
-
-      moveToNextColumnIfNeeded();
-
-      pdf.setFontSize(12);
-      pdf.text(nameOf(v.id), x, y);
-      y += 5;
-
-      pdf.setFontSize(10);
-      pdf.text(`Lane: ${v.lane}`, x, y); y += 4;
-      pdf.text(`Speed: ${v.speedKmh.toFixed(1)} km/h`, x, y); y += 4;
-      pdf.text(`Smoothness: ${v.smoothness.toFixed(1)}`, x, y); y += 4;
-
-      const wpStr = v.waypoints
-        .map((w) => `(${w.x.toFixed(1)}, ${w.offset.toFixed(1)})`)
-        .join(", ");
-      const wpLines = pdf.splitTextToSize(
-        `Waypoints: ${wpStr}`,
-        columnWidth
-      );
-      wpLines.forEach((line: string) => {
-        pdf.text(line, x, y);
-        y += 4;
-      });
-
-      if (v.brakePoints && v.brakePoints.length > 0) {
-        const bpStr = v.brakePoints
-          .map(
-            (bp) =>
-              `(${bp.x.toFixed(1)}, -${bp.decelerationMps2.toFixed(1)} m/s²)`
-          )
-          .join(", ");
-        const bpLines = pdf.splitTextToSize(
-          `Brake Points: ${bpStr}`,
-          columnWidth
-        );
-        bpLines.forEach((line: string) => {
-          pdf.text(line, x, y);
-          y += 4;
-        });
-      }
-
-      y += 3;
-    });
-
-    moveToNextColumnIfNeeded();
-    y += 4;
-
-    pdf.setFontSize(13);
-    pdf.text("Advanced Settings", x, y);
-    y += 6;
-
-    pdf.setFontSize(11);
-    pdf.text("Road Settings", x, y);
-    y += 5;
-
-    pdf.setFontSize(10);
-    const laneWidthStr = getFieldValue(["laneWidthInput", "road-width"]);
-    pdf.text(`Lane Width: ${laneWidthStr} m`, x, y);
-    y += 7;
-
-    moveToNextColumnIfNeeded();
-
-    pdf.setFontSize(11);
-    pdf.text("Camera Settings", x, y);
-    y += 5;
-    pdf.setFontSize(10);
-
-    const camLocX  = getFieldValue(["camLocX",  "cam-loc-x"]);
-    const camLocY  = getFieldValue(["camLocY",  "cam-loc-y"]);
-    const camLocZ  = getFieldValue(["camLocZ",  "cam-loc-z"]);
-    const camBank  = getFieldValue(["camBank",  "cam-bank"]);
-    const camTilt  = getFieldValue(["camTilt",  "cam-tilt"]);
-    const camHead  = getFieldValue(["camHeading", "cam-heading"]);
-
-    const parentLen = getFieldValue(["parentLength", "parent-length"]);
-    const parentWid = getFieldValue(["parentWidth",  "parent-width"]);
-    const parentHei = getFieldValue(["parentHeight", "parent-height"]);
-
-    const camResX  = getFieldValue(["camResX",  "cam-hres"]);
-    const camResY  = getFieldValue(["camResY",  "cam-vres"]);
-    const camFps   = getFieldValue(["camFps",   "cam-fps"]);
-    const camFocal = getFieldValue(["camFocal", "cam-focal"]);
-
-    const ccdSize  = getFieldValue(["ccdSize",  "cam-ccd"]);
-    const fovAz    = getFieldValue(["camFovAz", "cam-fov-az"]);
-    const fovEl    = getFieldValue(["camFovEl", "cam-fov-el"]);
-    const nearClip = getFieldValue(["nearClip", "cam-near"]);
-    const farClip  = getFieldValue(["farClip",  "cam-far"]);
-
-    pdf.text(
-      `Location: X=${camLocX} m, Y=${camLocY} m, Z=${camLocZ} m`,
-      x,
-      y
-    ); y += 4;
-
-    pdf.text(
-      `Orientation: Bank=${camBank}°, Tilt=${camTilt}°, Heading=${camHead}°`,
-      x,
-      y
-    ); y += 4;
-
-    pdf.text(
-      `Parent Size: L=${parentLen} m, W=${parentWid} m, H=${parentHei} m`,
-      x,
-      y
-    ); y += 5;
-
-    pdf.text(
-      `Resolution: ${camResX} × ${camResY} px @ ${camFps} Hz`,
-      x,
-      y
-    ); y += 4;
-
-    pdf.text(`Focal Length: ${camFocal} mm, CCD: ${ccdSize}`, x, y); y += 4;
-
-    if (fovAz !== "-" || fovEl !== "-") {
-      pdf.text(
-        `FoV: Azimuth=${fovAz}°, Elevation=${fovEl}°`,
-        x,
-        y
-      ); y += 4;
-    }
-
-    pdf.text(
-      `Clipping: Near=${nearClip} m, Far=${farClip} m`,
-      x,
-      y
-    );
+    addScenarioSettings();
+    addVehicleSettings();
+    addAdvancedSettings();
 
     pdf.save("scenario.pdf");
+
+    function addCanvasImage(pdfDoc: JsPDFInstance, pgW: number, pgH: number, mg: number): number {
+      const scenarioCanvas = document.getElementById("scenarioCanvas") as HTMLCanvasElement | null;
+      if (!scenarioCanvas) return mg;
+
+      const dataURL = scenarioCanvas.toDataURL("image/png");
+      const maxW = pgW - mg * 2;
+      const maxH = pgH * 0.45;
+      const props = pdfDoc.getImageProperties(dataURL);
+      const ratio = Math.min(maxW / props.width, maxH / props.height);
+      const imgW = props.width * ratio;
+      const imgH = props.height * ratio;
+      const imgX = (pgW - imgW) / 2;
+
+      pdfDoc.addImage(dataURL, "PNG", imgX, mg, imgW, imgH);
+      return mg + imgH;
+    }
+
+    function addScenarioSettings(): void {
+      printText("Scenario Settings", 15);
+      advanceY(7);
+
+      printText(`Number of lanes: ${lanesPerSide}`, 11);
+      advanceY(5);
+      printText(`Total Distance: ${totalDistanceM} m`, 11);
+      advanceY(7);
+    }
+
+    function addVehicleSettings(): void {
+      for (const vehicle of vehicles) {
+        if (!vehicle.enabled) continue;
+
+        ensureSpace(20);
+
+        printText(VEHICLE_DISPLAY_NAMES[vehicle.id] ?? vehicle.id, 12);
+        advanceY(5);
+
+        printText(`Lane: ${vehicle.lane}`, 10);
+        advanceY(4);
+        printText(`Speed: ${vehicle.speedKmh.toFixed(1)} km/h`, 10);
+        advanceY(4);
+        printText(`Smoothness: ${vehicle.smoothness.toFixed(1)}`, 10);
+        advanceY(4);
+
+        const wpStr = vehicle.waypoints
+          .map((wp) => `(${wp.x.toFixed(1)}, ${wp.offset.toFixed(1)})`)
+          .join(", ");
+        pdf.setFontSize(10);
+        const wpLines: string[] = pdf.splitTextToSize(`Waypoints: ${wpStr}`, columnWidth);
+        for (const line of wpLines) {
+          ensureSpace(4);
+          pdf.text(line, cursorX, cursorY);
+          advanceY(4);
+        }
+
+        if (vehicle.brakePoints.length > 0) {
+          const bpStr = vehicle.brakePoints
+            .map((bp) => `(${bp.x.toFixed(1)}, -${bp.decelerationMps2.toFixed(1)} m/s²)`)
+            .join(", ");
+          pdf.setFontSize(10);
+          const bpLines: string[] = pdf.splitTextToSize(`Brake Points: ${bpStr}`, columnWidth);
+          for (const line of bpLines) {
+            ensureSpace(4);
+            pdf.text(line, cursorX, cursorY);
+            advanceY(4);
+          }
+        }
+
+        advanceY(3);
+      }
+    }
+
+    function addAdvancedSettings(): void {
+      ensureSpace(20);
+      advanceY(4);
+
+      printText("Advanced Settings", 13);
+      advanceY(6);
+
+      printText("Road Settings", 11);
+      advanceY(5);
+
+      printText(`Lane Width: ${getModalFieldValue("road-width")} m`, 10);
+      advanceY(7);
+
+      ensureSpace(30);
+
+      printText("Camera Settings", 11);
+      advanceY(5);
+
+      printText(
+        `Location: X=${getModalFieldValue("cam-loc-x")} m, Y=${getModalFieldValue("cam-loc-y")} m, Z=${getModalFieldValue("cam-loc-z")} m`,
+        10,
+      );
+      advanceY(4);
+
+      printText(
+        `Orientation: Bank=${getModalFieldValue("cam-bank")}°, Tilt=${getModalFieldValue("cam-tilt")}°, Heading=${getModalFieldValue("cam-heading")}°`,
+        10,
+      );
+      advanceY(4);
+
+      printText(
+        `Parent Size: L=${getModalFieldValue("cam-length")} m, W=${getModalFieldValue("cam-width")} m, H=${getModalFieldValue("cam-height")} m`,
+        10,
+      );
+      advanceY(5);
+
+      printText(
+        `Resolution: ${getModalFieldValue("cam-hres")} × ${getModalFieldValue("cam-vres")} px @ ${getModalFieldValue("cam-fps")} Hz`,
+        10,
+      );
+      advanceY(4);
+
+      printText(
+        `Focal Length: ${getModalFieldValue("cam-focal")} mm, CCD: ${getModalFieldValue("cam-ccd")}`,
+        10,
+      );
+      advanceY(4);
+
+      const fovAz = getModalFieldValue("cam-fov-az");
+      const fovEl = getModalFieldValue("cam-fov-el");
+      if (fovAz !== "-" || fovEl !== "-") {
+        printText(`FoV: Azimuth=${fovAz}\u00B0, Elevation=${fovEl}\u00B0`, 10);
+        advanceY(4);
+      }
+
+      printText(
+        `Clipping: Near=${getModalFieldValue("cam-near")} m, Far=${getModalFieldValue("cam-far")} m`,
+        10,
+      );
+    }
   });
 }
 
+// ============================================================
+//  Initialization
+// ============================================================
+
+setupModal();
 setupUI();
 syncUIFromState();
 draw();

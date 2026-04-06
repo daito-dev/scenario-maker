@@ -4,8 +4,9 @@
     "module": "es2015",
     "lib": ["dom", "es2017"],
     "strict": true,
-    "noImplicitAny": true
+    "noImplicitAny": true,
+    "outDir": "./dist"
   },
-  "include": ["./main.ts"]
+  "include": ["./main.ts", "./jspdf.d.ts"]
 }
 

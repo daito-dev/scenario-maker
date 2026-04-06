@@ -35,7 +35,8 @@ input[type="number"],
 input[type="text"],
 textarea,
 select {
-  width: 96%;
+  box-sizing: border-box;
+  width: 100%;
   padding: 6px;
   margin-top: 4px;
   background-color: #1f2933;

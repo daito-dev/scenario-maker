@@ -36,130 +36,10 @@
 
         <hr />
 
-        <!-- ===== Vehicle Panels ===== -->
-        <div class="vehicle-panel" data-vehicle-id="ego">
-          <div class="vehicle-header">
-            <span class="vehicle-label">Ego Vehicle</span>
-            <label><input type="checkbox" class="vehicle-enabled" checked /> Show</label>
-          </div>
-
-          <div class="vehicle-body">
-            <label>Initial Lane:
-              <input type="number" class="vehicle-lane" min="1" max="6" value="1" />
-            </label>
-
-            <label>
-              Color:
-              <input type="color" class="vehicle-color" value="#ff4444" />
-              Speed (km/h):
-              <input type="number" class="vehicle-speed" step="1" value="72" />
-            </label>
-
-            <label>Curve Smoothness:
-              <input type="range" class="vehicle-smooth" min="0" max="1" step="0.1" value="0.7" />
-              <span class="vehicle-smooth-value">0.7</span>
-            </label>
-
-            <label>Waypoints:</label>
-            <textarea class="vehicle-waypoints"></textarea>
-            <button class="vehicle-add-wp">Add Waypoint</button>
-
-            <label>Brake Points (x, decel [m/s²]):</label>
-            <textarea class="vehicle-brakepoints"></textarea>
-            <button class="vehicle-add-bp">Add Brake Point</button>
-          </div>
-        </div>
-
-        <!-- NPC 1 -->
-        <div class="vehicle-panel" data-vehicle-id="npc1">
-          <div class="vehicle-header">
-            <span class="vehicle-label">NPC 1</span>
-            <label><input type="checkbox" class="vehicle-enabled" checked /> Show</label>
-          </div>
-
-          <div class="vehicle-body">
-            <label>Initial Lane:
-              <input type="number" class="vehicle-lane" min="1" max="6" value="2" />
-            </label>
-
-            <label>
-              Color:
-              <input type="color" class="vehicle-color" value="#337bff" />
-              Speed (km/h):
-              <input type="number" class="vehicle-speed" step="1" value="54" />
-            </label>
-
-            <label>Curve Smoothness:
-              <input type="range" class="vehicle-smooth" min="0" max="1" step="0.1" value="0.2" />
-              <span class="vehicle-smooth-value">0.2</span>
-            </label>
-
-            <label>Waypoints:</label>
-            <textarea class="vehicle-waypoints"></textarea>
-            <button class="vehicle-add-wp">Add Waypoint</button>
-          </div>
-        </div>
-
-        <!-- NPC 2 -->
-        <div class="vehicle-panel" data-vehicle-id="npc2">
-          <div class="vehicle-header">
-            <span class="vehicle-label">NPC 2</span>
-            <label><input type="checkbox" class="vehicle-enabled" /> Show</label>
-          </div>
-
-          <div class="vehicle-body">
-            <label>Initial Lane:
-              <input type="number" class="vehicle-lane" min="1" max="6" value="1" />
-            </label>
-
-            <label>
-              Color:
-              <input type="color" class="vehicle-color" value="#2ecc71" />
-              Speed (km/h):
-              <input type="number" class="vehicle-speed" step="1" value="72" />
-            </label>
-
-            <label>Curve Smoothness:
-              <input type="range" class="vehicle-smooth" min="0" max="1" step="0.1" value="0.7" />
-              <span class="vehicle-smooth-value">0.7</span>
-            </label>
-
-            <label>Waypoints:</label>
-            <textarea class="vehicle-waypoints"></textarea>
-            <button class="vehicle-add-wp">Add Waypoint</button>
-          </div>
-        </div>
-
-        <!-- NPC 3 -->
-        <div class="vehicle-panel" data-vehicle-id="npc3">
-          <div class="vehicle-header">
-            <span class="vehicle-label">NPC 3</span>
-            <label><input type="checkbox" class="vehicle-enabled" /> Show</label>
-          </div>
-
-          <div class="vehicle-body">
-            <label>Initial Lane:
-              <input type="number" class="vehicle-lane" min="1" max="6" value="2" />
-            </label>
-
-            <label>
-              Color:
-              <input type="color" class="vehicle-color" value="#f39c12" />
-              Speed (km/h):
-              <input type="number" class="vehicle-speed" step="1" value="72" />
-            </label>
-
-            <label>Curve Smoothness:
-              <input type="range" class="vehicle-smooth" min="0" max="1" step="0.1" value="0.7" />
-              <span class="vehicle-smooth-value">0.7</span>
-            </label>
-
-            <label>Waypoints:</label>
-            <textarea class="vehicle-waypoints"></textarea>
-            <button class="vehicle-add-wp">Add Waypoint</button>
-          </div>
-        </div>
+        <!-- Vehicle panels are generated dynamically by main.ts -->
+        <div id="vehiclePanelsContainer"></div>
       </div>
+
 
       <!-- ===== Canvas Area ===== -->
       <div id="canvasContainer">
@@ -241,6 +121,6 @@
       </div>
     </div>
 
-    <script type="module" src="main.js"></script>
+    <script type="module" src="dist/main.js"></script>
   </body>
 </html>
